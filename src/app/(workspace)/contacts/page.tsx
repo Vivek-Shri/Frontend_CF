@@ -395,8 +395,22 @@ export default function ContactsPage() {
   /* ──────────────────────────────────────────────────────────────
      Save List to Global Contacts Database
   ────────────────────────────────────────────────────────────── */
-  const openSendModal = useCallback((list: ContactList) => {
-    setSendingList(list); setSendingDone(false); setSendingActive(false);
+  const openSendModal = useCallback(async (list: ContactList) => {
+    let targetList = list;
+    if (!list.contacts || list.contacts.length === 0) {
+      try {
+        const res = await fetch(`/api/contact-lists/${list.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          targetList = { ...list, contacts: data.contacts || [] };
+          setLists(prev => prev.map(l => l.id === list.id ? targetList : l));
+        }
+      } catch (err) {
+        console.error("Failed to load list contacts for sending", err);
+      }
+    }
+    
+    setSendingList(targetList); setSendingDone(false); setSendingActive(false);
     setSendingProgress(0); setSendingCount(0); setShowSendModal(true);
   }, []);
 
