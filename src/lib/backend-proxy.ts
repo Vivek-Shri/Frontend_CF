@@ -41,9 +41,6 @@ export async function backendJson(
   if (init.body && typeof init.body === "object" && !(init.body instanceof FormData) && !(init.body instanceof URLSearchParams) && !(init.body instanceof Blob)) {
     headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(init.body);
-    console.log(`[DEBUG Proxy] ${init.method || "GET"} ${path} body length:`, (init.body as string).length);
-  } else {
-    console.log(`[DEBUG Proxy] ${init.method || "GET"} ${path} no object body`);
   }
 
   const response = await fetch(`${backendBaseUrl}${path}`, withNoStore({
@@ -51,10 +48,6 @@ export async function backendJson(
     headers
   }));
   const payload = await parseJsonSafe(response);
-
-  if (!response.ok) {
-    console.log(`[DEBUG Response] ${response.status} from ${path}:`, JSON.stringify(payload));
-  }
 
   return {
     ok: response.ok,

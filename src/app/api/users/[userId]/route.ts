@@ -29,7 +29,7 @@ export async function PUT(request: Request, { params }: { params: Promise<Params
 
   try {
     const result = await backendJson(
-      `/api/users/${userId}/role`,
+      `/api/users/${encodeURIComponent(userId)}`,
       {
         method: "PUT",
         headers: { "Content-Type": "application/json" },

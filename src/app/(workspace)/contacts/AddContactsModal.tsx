@@ -652,7 +652,7 @@ export function AddContactsModal({
                         >
                           <div>
                             <p className="font-medium text-gray-900 text-sm">{l.name}</p>
-                            <p className="text-xs text-gray-500">{l.contacts.length} current contacts</p>
+                            <p className="text-xs text-gray-500">{l.contacts?.length ?? 0} current contacts</p>
                           </div>
                           {selectedListId === l.id && <Check size={18} className="text-blue-600 shrink-0" />}
                         </button>

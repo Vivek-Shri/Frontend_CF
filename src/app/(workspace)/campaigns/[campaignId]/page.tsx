@@ -472,7 +472,7 @@ export default function CampaignDetailPage() {
 
       if (!res.ok) throw new Error("Bulk import failed returned " + res.status);
       
-      setMessage(`Successfully imported ${list.contacts.length} contacts from "${list.name}".`);
+      setMessage(`Successfully imported ${listContacts.length} contacts from "${list.name}".`);
       setShowImportModal(false);
       await loadCampaignBundle();
     } catch (err) {

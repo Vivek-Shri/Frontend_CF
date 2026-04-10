@@ -30,10 +30,6 @@ export async function POST(
     );
 
     if (!result.ok) {
-      console.log(`[DEBUG Bulk] Backend error ${result.status}:`, JSON.stringify(result.payload));
-    }
-
-    if (!result.ok) {
       return NextResponse.json(
         { error: extractError(result.payload, "Failed to bulk import contacts.") },
         { status: result.status || 500 }
