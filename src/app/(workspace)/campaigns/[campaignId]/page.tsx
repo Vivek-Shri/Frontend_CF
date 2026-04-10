@@ -1320,7 +1320,7 @@ export default function CampaignDetailPage() {
                             <span className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">Type</span>
                             <select
                               value={step.type || "immediate"}
-                              onChange={e => setStepsLocal(prev => prev.map((s, idx) => idx === i ? { ...s, type: e.target.value } : s))}
+                              onChange={e => setStepsLocal(prev => prev.map((s, idx) => idx === i ? { ...s, type: e.target.value as "immediate" | "normal" } : s))}
                               className="field-input text-sm py-1.5"
                             >
                               <option value="immediate">Immediate Send</option>
