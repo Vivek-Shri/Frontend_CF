@@ -1206,7 +1206,7 @@ export default function CampaignDetailPage() {
                       const _negatives = ["not found", "not filled", "could not find", "no form", "form not", "unable to find", "failed to find", "no contact"];
                       const _capFoundPositive = _cap.includes("found") && !_negatives.some(n => _cap.includes(n));
                       const _confFormPositive = (_conf.includes("form") || _conf.includes("submitted") || _conf.includes("sent") || _conf.includes("message")) && !_negatives.some(n => _conf.includes(n));
-                      const formFound = _capFoundPositive || _confFormPositive;
+                      const formFound = _capFoundPositive || _confFormPositive || result?.status === "success";
                       return (
                         <tr key={contact.id} className={result?.status === "success" ? "bg-green-50/30" : result?.status === "fail" ? "bg-red-50/30" : ""}>
                           <td><StatusIcon status={result?.status ?? null} /></td>
