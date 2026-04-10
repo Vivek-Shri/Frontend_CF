@@ -408,11 +408,11 @@ export default function ContactsPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          contacts: sendingList.contacts,
+          contacts: sendingList.contacts || [],
           campaign_id: selectedCampaignId || undefined
         }),
       });
-      setSendingCount(sendingList.contacts.length);
+      setSendingCount(sendingList.contacts?.length ?? 0);
       setSendingProgress(100);
       void loadContacts();
     } catch {
@@ -513,7 +513,7 @@ export default function ContactsPage() {
             <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900">Add to Campaign</h3>
-                <p className="text-xs text-gray-500 mt-0.5">{sendingList.contacts.length} contacts · &quot;{sendingList.name}&quot;</p>
+                <p className="text-xs text-gray-500 mt-0.5">{sendingList.contacts?.length ?? 0} contacts · &quot;{sendingList.name}&quot;</p>
               </div>
               {!sendingActive && <button onClick={() => setShowSendModal(false)} className="p-1 text-gray-400 hover:text-gray-600"><X size={20} /></button>}
             </div>
@@ -521,7 +521,7 @@ export default function ContactsPage() {
               {!sendingDone && !sendingActive && (
                 <>
                   <p className="text-sm text-gray-600">
-                    Select a campaign to add {sendingList.contacts.length} contacts from &quot;{sendingList.name}&quot;.
+                    Select a campaign to add {sendingList.contacts?.length ?? 0} contacts from &quot;{sendingList.name}&quot;.
                   </p>
 
                   <div className="space-y-1.5">
@@ -550,7 +550,7 @@ export default function ContactsPage() {
               {sendingActive && (
                 <div className="space-y-3 text-center py-2">
                   <p className="font-medium text-gray-900 text-sm">Sending contacts…</p>
-                  <p className="text-gray-500 text-xs">{sendingCount} of {sendingList.contacts.length} sent</p>
+                  <p className="text-gray-500 text-xs">{sendingCount} of {sendingList.contacts?.length ?? 0} sent</p>
                   <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
                     <div className="bg-blue-600 h-2 rounded-full transition-all duration-300" style={{ width: `${sendingProgress}%` }} />
                   </div>
