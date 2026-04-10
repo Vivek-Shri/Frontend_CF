@@ -106,7 +106,7 @@ export default function OverviewPage() {
               processedLeads: data.processed_leads ?? 0,
               currentLead: data.current_lead ?? "-",
               logs: data.logs ?? [],
-              results: data.results ?? [],
+              results: (data.results as any) ?? [],
               duplicatesSkipped: data.duplicates_skipped ?? 0,
               startedAt: data.started_at ?? "",
             });
