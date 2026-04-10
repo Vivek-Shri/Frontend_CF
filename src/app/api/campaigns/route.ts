@@ -69,7 +69,7 @@ export async function POST(request: Request) {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: body,
+          body: JSON.stringify(body),
         },
       { userId: (session.user as any).id, isAdmin: (session.user as any).isAdmin }
     );

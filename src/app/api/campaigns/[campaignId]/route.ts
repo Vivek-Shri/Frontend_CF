@@ -61,7 +61,7 @@ export async function PUT(request: Request, { params }: { params: Promise<Params
       {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: body,
+        body: JSON.stringify(body),
       },
       { userId: (session.user as any).id, isAdmin: (session.user as any).isAdmin }
     );
