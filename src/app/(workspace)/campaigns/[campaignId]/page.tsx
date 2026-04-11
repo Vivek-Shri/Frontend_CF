@@ -369,8 +369,26 @@ export default function CampaignDetailPage() {
           leads: contacts.map(c => ({ companyName: c.companyName, contactUrl: c.contactUrl })),
         }),
       });
-      const payload = await res.json() as OutreachRunSnapshot | { error?: string };
-      if (!res.ok || !("runId" in payload)) { setMessage(("error" in payload && payload.error) || "Unable to start run."); return; }
+      const payload = await res.json() as OutreachRunSnapshot | { error?: string; runId?: string };
+      if (!res.ok || !("runId" in payload) || !("status" in payload)) {
+        // If 409, there's already a run in progress — recover by polling its status
+        if (res.status === 409 && "runId" in payload && payload.runId) {
+          try {
+            const existingRes = await fetch(`/api/outreach/run?runId=${encodeURIComponent(payload.runId)}`, { cache: "no-store" });
+            if (existingRes.ok) {
+              const existingSnap = await existingRes.json() as OutreachRunSnapshot;
+              if ("runId" in existingSnap) {
+                setRunSnapshot(existingSnap);
+                setMessage(`Resumed tracking run ${existingSnap.runId}.`);
+                setActiveTab("activity");
+                return;
+              }
+            }
+          } catch { /* fall through to error message */ }
+        }
+        setMessage(("error" in payload && payload.error) || "Unable to start run.");
+        return;
+      }
       setRunSnapshot(payload);
       setMessage(`Run ${payload.runId} started.`);
       setActiveTab("activity");
