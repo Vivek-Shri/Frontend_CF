@@ -263,6 +263,24 @@ export default function CampaignDetailPage() {
       setEditSearchForForm(cData.searchForForm || false);
       setEditBreakFlag(cData.breakFlag || false);
       setStepsLocal(Array.isArray(cData.steps) ? cData.steps : []);
+
+      if (cData.lastRun && isActiveRun(cData.lastRun.status)) {
+        setRunSnapshot((prev: OutreachRunSnapshot | null) => {
+          if (prev && prev.runId === cData.lastRun?.runId) return prev;
+          return {
+            runId: cData.lastRun!.runId,
+            status: cData.lastRun!.status,
+            progress: cData.lastRun!.totalLeads > 0 ? Math.round((cData.lastRun!.processedLeads / cData.lastRun!.totalLeads) * 100) : 0,
+            totalLeads: cData.lastRun!.totalLeads,
+            processedLeads: cData.lastRun!.processedLeads,
+            currentLead: "",
+            logs: [],
+            results: [],
+            duplicatesSkipped: cData.lastRun!.duplicatesSkipped,
+            startedAt: cData.lastRun!.startedAt,
+          } as OutreachRunSnapshot;
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load campaign.");
     } finally {
