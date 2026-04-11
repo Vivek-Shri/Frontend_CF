@@ -370,16 +370,26 @@ export default function CampaignDetailPage() {
         }),
       });
       const payload = await res.json() as OutreachRunSnapshot | { error?: string; runId?: string };
-      if (!res.ok || !("runId" in payload) || !("status" in payload)) {
+      if (!res.ok || !("runId" in payload && payload.runId) || !("status" in payload)) {
         // If 409, there's already a run in progress — recover by polling its status
-        if (res.status === 409 && "runId" in payload && payload.runId) {
+        let recoveredRunId = payload.runId;
+        
+        // Try to extract run_id from the error message if the backend didn't provide it
+        if (!recoveredRunId && payload.error) {
+           const match = payload.error.match(/run_id=([a-f0-9]+)/i);
+           if (match && match[1]) {
+             recoveredRunId = match[1];
+           }
+        }
+        
+        if (res.status === 409 && recoveredRunId) {
           try {
-            const existingRes = await fetch(`/api/outreach/run?runId=${encodeURIComponent(payload.runId)}`, { cache: "no-store" });
+            const existingRes = await fetch(`/api/outreach/run?runId=${encodeURIComponent(recoveredRunId)}`, { cache: "no-store" });
             if (existingRes.ok) {
               const existingSnap = await existingRes.json() as OutreachRunSnapshot;
               if ("runId" in existingSnap) {
                 setRunSnapshot(existingSnap);
-                setMessage(`Resumed tracking run ${existingSnap.runId}.`);
+                setMessage(`Resumed tracking existing run ${existingSnap.runId}.`);
                 setActiveTab("activity");
                 return;
               }
