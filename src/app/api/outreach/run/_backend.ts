@@ -319,7 +319,12 @@ export async function fetchBackendSnapshot(
   if (options?.userId) headers["X-User-Id"] = options.userId;
   if (options?.isAdmin) headers["X-Is-Admin"] = "true";
 
-  const statusResponse = await fetch(`${backendBaseUrl}/outreach/status`, {
+  const url = new URL(`${backendBaseUrl}/outreach/status`);
+  if (requestedRunId && requestedRunId !== "current") {
+    url.searchParams.set("run_id", requestedRunId);
+  }
+
+  const statusResponse = await fetch(url.toString(), {
     method: "GET",
     cache: "no-store",
     headers
