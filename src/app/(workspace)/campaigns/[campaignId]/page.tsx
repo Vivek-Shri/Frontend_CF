@@ -397,9 +397,23 @@ export default function CampaignDetailPage() {
             if (existingRes.ok) {
               const existingSnap = await existingRes.json() as OutreachRunSnapshot;
               if ("runId" in existingSnap) {
+                if (isActiveRun(existingSnap.status)) {
+                  // Run is genuinely active — resume tracking it
+                  setRunSnapshot(existingSnap);
+                  setMessage(`Resumed tracking existing run ${existingSnap.runId}.`);
+                  setActiveTab("activity");
+                  return;
+                }
+                // Run is dead but backend thinks it's alive (zombie) — force stop to clear it
+                setMessage(`Clearing stale run ${existingSnap.runId}... please click Start Run again.`);
+                try {
+                  await fetch("/api/outreach/run/stop", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ runId: recoveredRunId }),
+                  });
+                } catch { /* ignore stop errors */ }
                 setRunSnapshot(existingSnap);
-                setMessage(`Resumed tracking existing run ${existingSnap.runId}.`);
-                setActiveTab("activity");
                 return;
               }
             }
