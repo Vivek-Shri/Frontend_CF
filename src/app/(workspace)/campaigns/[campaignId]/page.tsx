@@ -264,7 +264,9 @@ export default function CampaignDetailPage() {
       setEditBreakFlag(cData.breakFlag || false);
       setStepsLocal(Array.isArray(cData.steps) ? cData.steps : []);
 
-      if (cData.lastRun && isActiveRun(cData.lastRun.status)) {
+      // Always restore latest run snapshot so stats persist across page loads
+      if (cData.lastRun) {
+        // If run is active, restore the snapshot immediately for polling
         setRunSnapshot((prev: OutreachRunSnapshot | null) => {
           if (prev && prev.runId === cData.lastRun?.runId) return prev;
           return {
@@ -275,11 +277,18 @@ export default function CampaignDetailPage() {
             processedLeads: cData.lastRun!.processedLeads,
             currentLead: "",
             logs: [],
-            results: [],
+            results: prev?.results ?? [],
             duplicatesSkipped: cData.lastRun!.duplicatesSkipped,
             startedAt: cData.lastRun!.startedAt,
           } as OutreachRunSnapshot;
         });
+        // Fetch full status (with results) to populate stats
+        fetch(`/api/outreach/run?runId=${encodeURIComponent(cData.lastRun.runId)}`, { cache: "no-store" })
+          .then(r => r.ok ? r.json() : null)
+          .then((snap: OutreachRunSnapshot | null) => {
+            if (snap && "runId" in snap) setRunSnapshot(snap);
+          })
+          .catch(() => { /* ignore */ });
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load campaign.");
@@ -837,15 +846,27 @@ export default function CampaignDetailPage() {
           </div>
         )}
 
-        {/* Run progress */}
-        {runSnapshot && isActiveRun(runSnapshot.status) && (
+        {/* Run progress — show for active AND recently completed/failed runs */}
+        {runSnapshot && (
           <div style={{ marginTop: "12px" }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
-              <p className="text-xs text-gray-500">Run progress · {runSnapshot.processedLeads}/{runSnapshot.totalLeads}</p>
-              <p className="text-xs font-medium text-blue-600">{runSnapshot.progress}%</p>
+              <p className="text-xs text-gray-500">
+                {isActiveRun(runSnapshot.status)
+                  ? `Run progress · ${runSnapshot.processedLeads}/${runSnapshot.totalLeads}`
+                  : `Last run ${runSnapshot.status} · ${runSnapshot.processedLeads}/${runSnapshot.totalLeads} processed`}
+              </p>
+              <p className={`text-xs font-medium ${
+                runSnapshot.status === "completed" ? "text-green-600" :
+                runSnapshot.status === "failed" ? "text-red-500" :
+                "text-blue-600"
+              }`}>{runSnapshot.progress}%</p>
             </div>
             <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
-              <div className="bg-blue-600 h-2 rounded-full transition-all duration-500" style={{ width: `${runSnapshot.progress}%` }} />
+              <div className={`h-2 rounded-full transition-all duration-500 ${
+                runSnapshot.status === "completed" ? "bg-green-500" :
+                runSnapshot.status === "failed" ? "bg-red-400" :
+                "bg-blue-600"
+              }`} style={{ width: `${runSnapshot.progress}%` }} />
             </div>
           </div>
         )}
