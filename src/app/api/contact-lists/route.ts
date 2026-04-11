@@ -87,17 +87,29 @@ export async function POST(request: Request) {
       );
 
       if (Array.isArray(contacts) && contacts.length > 0) {
-        let idx = 0;
-        for (const c of contacts) {
-          const url = (c.contactUrl || "").trim();
-          if (url) {
-            const itemId = `${listId}-item-${idx++}-${Math.random().toString(36).substring(2, 8)}`;
-            await client.query(
-              `INSERT INTO contact_list_items (item_id, list_id, company_name, contact_url, created_at)
-               VALUES ($1, $2, $3, $4, $5)`,
-              [itemId, listId, c.companyName || "Unknown", url, now]
-            );
+        // Filter out empty URLs and build values for batch insert
+        const validContacts = contacts.filter(c => (c.contactUrl || "").trim() !== "");
+        if (validContacts.length > 0) {
+          const values: any[] = [];
+          const placeholders: string[] = [];
+          let paramIdx = 1;
+
+          for (let i = 0; i < validContacts.length; i++) {
+            const c = validContacts[i];
+            const url = c.contactUrl.trim();
+            const itemId = `${listId}-item-${i}-${Math.random().toString(36).substring(2, 8)}`;
+            
+            placeholders.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++})`);
+            values.push(itemId, listId, c.companyName || "Unknown", url, now);
           }
+
+          // PostgreSQL supports max 65535 generic parameters, which allows up to ~13,100 rows per batch. We are safe with ~5000 contacts.
+          const insertQuery = `
+            INSERT INTO contact_list_items (item_id, list_id, company_name, contact_url, created_at)
+            VALUES ${placeholders.join(", ")}
+          `;
+          
+          await client.query(insertQuery, values);
         }
       }
 
