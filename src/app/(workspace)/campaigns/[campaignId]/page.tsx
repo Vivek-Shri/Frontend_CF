@@ -1402,7 +1402,6 @@ export default function CampaignDetailPage() {
             ) : (
               stepsLocal.map((step, i) => {
                 const isExpanded = expandedStepIndex === i;
-                const label = (typeof step === "string" ? step : step.aiInstruction || "").trim();
                 const typeLabel = step.type === "normal" ? `Scheduled (Day +${step.daySequence || 1}, ${step.timeOfDay || "09:00"})` : "Immediate Send";
                 return (
                   <div key={step.id || i} className={`border ${step.enabled !== false ? "border-gray-200 bg-white" : "border-gray-100 bg-gray-50 opacity-70"} rounded-xl shadow-sm transition-all overflow-hidden`}>
@@ -1416,7 +1415,7 @@ export default function CampaignDetailPage() {
                         {i + 1}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-gray-800 truncate">{label || <span className="italic text-gray-400">No instruction yet</span>}</p>
+                        <p className="text-sm font-medium text-gray-800 truncate">Step {i + 1}</p>
                         <p className="text-xs text-gray-400 mt-0.5">{typeLabel}</p>
                       </div>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${step.enabled !== false ? "bg-green-100 text-green-700" : "bg-gray-200 text-gray-500"}`}>
