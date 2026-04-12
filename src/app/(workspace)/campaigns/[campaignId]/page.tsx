@@ -342,17 +342,23 @@ export default function CampaignDetailPage() {
   }, [runSnapshot, campaignId, userId]);
 
   /* ─── Poll active run ─────────────────────────────────────── */
+  const poll404CountRef = React.useRef(0);
   useEffect(() => {
     if (!runSnapshot || !isActiveRun(runSnapshot.status)) return;
+    poll404CountRef.current = 0; // reset on re-mount
     const timer = globalThis.setInterval(async () => {
       try {
         const res = await fetch(`/api/outreach/run?runId=${encodeURIComponent(runSnapshot.runId)}`, { cache: "no-store" });
         if (res.status === 404) {
-          // Run no longer exists on backend — stop polling
-          setRunSnapshot(prev => prev ? { ...prev, status: "completed" as OutreachRunSnapshot["status"] } : prev);
-          void loadCampaignBundle();
+          // Tolerate transient 404s — only complete after 3 consecutive misses
+          poll404CountRef.current += 1;
+          if (poll404CountRef.current >= 3) {
+            setRunSnapshot(prev => prev ? { ...prev, status: "completed" as OutreachRunSnapshot["status"] } : prev);
+            void loadCampaignBundle();
+          }
           return;
         }
+        poll404CountRef.current = 0; // reset on success
         const payload = await res.json() as OutreachRunSnapshot | { error?: string };
         if (!res.ok || !("runId" in payload)) return;
         setRunSnapshot(payload);
