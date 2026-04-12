@@ -1,7 +1,7 @@
 import type { OutreachRunSnapshot, RunResultRow, RunStatus } from "./_store";
 
 const LOCAL_BACKEND_URL = "http://64.227.188.12:8001";
-const LOG_TAIL = 800;
+const LOG_TAIL = 200;
 
 type RuntimeEnv = Record<string, string | undefined>;
 
@@ -312,7 +312,7 @@ export function buildSnapshotFromStartPayload(payload: Record<string, unknown>):
 
 export async function fetchBackendSnapshot(
   requestedRunId?: string,
-  options?: { userId?: string; isAdmin?: boolean }
+  options?: { userId?: string; isAdmin?: boolean; includeLogs?: boolean }
 ): Promise<OutreachRunSnapshot | null> {
   const backendBaseUrl = resolveBackendBaseUrl();
   const headers = {} as Record<string, string>;
@@ -364,7 +364,8 @@ export async function fetchBackendSnapshot(
   }
 
   let logs: string[] = [];
-  if (backendRunId) {
+  const shouldFetchLogs = options?.includeLogs !== false;
+  if (backendRunId && shouldFetchLogs) {
     const logsUrl = `${backendBaseUrl}/outreach/logs?run_id=${encodeURIComponent(backendRunId)}&tail=${LOG_TAIL}`;
     const logsResponse = await fetch(logsUrl, {
       method: "GET",

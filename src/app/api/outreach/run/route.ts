@@ -30,7 +30,6 @@ function isValidPersona(persona: unknown): persona is RunPersonaInput {
   return (
     typeof candidate.id === "string" &&
     typeof candidate.title === "string" &&
-    typeof candidate.aiInstruction === "string" &&
     (candidate.maxDailySubmissions === undefined ||
       (typeof candidate.maxDailySubmissions === "number" &&
         Number.isFinite(candidate.maxDailySubmissions)))
@@ -170,7 +169,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    const options = { userId: (session.user as any).id, isAdmin: (session.user as any).isAdmin };
+    const options = { userId: (session.user as any).id, isAdmin: (session.user as any).isAdmin, includeLogs: false };
     const snapshot = await fetchBackendSnapshot(runId, options);
     if (!snapshot) {
       return NextResponse.json({ error: "Run not found." }, { status: 404 });

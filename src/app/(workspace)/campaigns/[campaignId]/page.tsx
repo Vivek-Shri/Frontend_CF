@@ -42,7 +42,7 @@ interface ContactList { id: string; name: string; contacts: ListContact[]; creat
 interface CampaignContactsResponse { contacts: ContactRecord[]; }
 interface CampaignRunsResponse { runs: CampaignRunSummary[]; }
 
-const RUN_POLL_INTERVAL_MS = 2500;
+const RUN_POLL_INTERVAL_MS = 1500;
 type Tab = "contacts" | "activity" | "results" | "editor" | "settings";
 type FilterMode = "all" | "success" | "fail" | "pending" | "warning";
 
@@ -164,7 +164,7 @@ export default function CampaignDetailPage() {
   const [editName, setEditName] = useState("");
   const [editStatus, setEditStatus] = useState<CampaignRecord["status"]>("draft");
   const [editMaxDaily, setEditMaxDaily] = useState(100);
-  const [editAiInstruction, setEditAiInstruction] = useState("");
+
   const [editSearchForForm, setEditSearchForForm] = useState(false);
   const [editBreakFlag, setEditBreakFlag] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
@@ -259,7 +259,7 @@ export default function CampaignDetailPage() {
       setEditName(cData.name);
       setEditStatus(cData.status);
       setEditMaxDaily(cData.maxDailySubmissions);
-      setEditAiInstruction(cData.aiInstruction || "");
+
       setEditSearchForForm(cData.searchForForm || false);
       setEditBreakFlag(cData.breakFlag || false);
       setStepsLocal(Array.isArray(cData.steps) ? cData.steps : []);
@@ -366,6 +366,8 @@ export default function CampaignDetailPage() {
   const startRun = useCallback(async () => {
     if (!campaign) return;
     if (contacts.length === 0) { setMessage("Add contacts before starting a run."); return; }
+    const enabledSteps = (stepsLocal || []).filter((s: any) => s.enabled !== false);
+    if (enabledSteps.length === 0) { setMessage("⚠️ Add at least one enabled step in the Editor tab before starting a run."); setActiveTab("editor"); return; }
     setStartingRun(true);
     setMessage("");
     try {
@@ -374,7 +376,7 @@ export default function CampaignDetailPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           resume: true,
-          persona: { id: campaign.id, title: campaign.name, aiInstruction: campaign.aiInstruction, maxDailySubmissions: campaign.maxDailySubmissions },
+          persona: { id: campaign.id, title: campaign.name, aiInstruction: enabledSteps[0]?.aiInstruction || "", maxDailySubmissions: campaign.maxDailySubmissions, steps: stepsLocal },
           leads: contacts.map(c => ({ companyName: c.companyName, contactUrl: c.contactUrl })),
         }),
       });
@@ -559,7 +561,6 @@ export default function CampaignDetailPage() {
         name: editName,
         status: editStatus,
         maxDailySubmissions: editMaxDaily,
-        aiInstruction: editAiInstruction,
         searchForForm: editSearchForForm,
         breakFlag: editBreakFlag,
         steps: stepsLocal,
@@ -576,7 +577,7 @@ export default function CampaignDetailPage() {
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Unable to update.");
     } finally { setSavingSettings(false); }
-  }, [campaign, editName, editStatus, editMaxDaily, editAiInstruction, editSearchForForm, editBreakFlag, stepsLocal]);
+  }, [campaign, editName, editStatus, editMaxDaily, editSearchForForm, editBreakFlag, stepsLocal]);
 
   const saveSteps = useCallback(async () => {
     if (!campaign) return;
@@ -863,6 +864,29 @@ export default function CampaignDetailPage() {
         {/* Run progress — show for active AND recently completed/failed runs */}
         {runSnapshot && (
           <div style={{ marginTop: "12px" }}>
+            {/* Live status strip */}
+            <div className="flex items-center gap-4 flex-wrap mb-2 px-1">
+              <div className="flex items-center gap-1.5">
+                <span className="inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                <span className="text-xs font-medium text-gray-700">
+                  {isActiveRun(runSnapshot.status) ? "Processing" : runSnapshot.status.charAt(0).toUpperCase() + runSnapshot.status.slice(1)}
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-xs">
+                <span className="font-semibold text-blue-600">
+                  📊 {runSnapshot.processedLeads}/{runSnapshot.totalLeads} processed
+                </span>
+                <span className="text-green-600 font-medium">✅ {stats.success} success</span>
+                <span className="text-red-500 font-medium">❌ {stats.fail} failed</span>
+                <span className="text-gray-500 font-medium">⏳ {Math.max(0, runSnapshot.totalLeads - runSnapshot.processedLeads)} remaining</span>
+              </div>
+              {runSnapshot.currentLead && runSnapshot.currentLead !== "-" && isActiveRun(runSnapshot.status) && (
+                <span className="text-xs text-gray-400 truncate max-w-[200px]" title={runSnapshot.currentLead}>
+                  → {runSnapshot.currentLead}
+                </span>
+              )}
+            </div>
+            {/* Progress bar */}
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px" }}>
               <p className="text-xs text-gray-500">
                 {isActiveRun(runSnapshot.status)
@@ -875,13 +899,21 @@ export default function CampaignDetailPage() {
                 "text-blue-600"
               }`}>{runSnapshot.progress}%</p>
             </div>
-            <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
-              <div className={`h-2 rounded-full transition-all duration-500 ${
+            <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
+              <div className={`h-2.5 rounded-full transition-all duration-300 ${
                 runSnapshot.status === "completed" ? "bg-green-500" :
                 runSnapshot.status === "failed" ? "bg-red-400" :
-                "bg-blue-600"
+                "bg-gradient-to-r from-blue-500 to-blue-600"
               }`} style={{ width: `${runSnapshot.progress}%` }} />
             </div>
+            {/* Skipped info */}
+            {(runSnapshot.duplicatesSkipped > 0 || (runSnapshot as any).resumeSkippedLeads > 0 || (runSnapshot as any).socialSkippedLeads > 0) && (
+              <div className="flex items-center gap-3 mt-2 text-[11px] text-gray-400">
+                {runSnapshot.duplicatesSkipped > 0 && <span>🔁 {runSnapshot.duplicatesSkipped} duplicates skipped</span>}
+                {(runSnapshot as any).resumeSkippedLeads > 0 && <span>⏩ {(runSnapshot as any).resumeSkippedLeads} resume skipped</span>}
+                {(runSnapshot as any).socialSkippedLeads > 0 && <span>🚫 {(runSnapshot as any).socialSkippedLeads} social skipped</span>}
+              </div>
+            )}
           </div>
         )}
 
