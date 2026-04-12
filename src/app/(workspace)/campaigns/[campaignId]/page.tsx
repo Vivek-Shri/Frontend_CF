@@ -297,6 +297,19 @@ export default function CampaignDetailPage() {
     }
   }, [campaignId]);
 
+  const viewPastRun = useCallback(async (runId: string) => {
+    try {
+      const res = await fetch(`/api/outreach/run?runId=${encodeURIComponent(runId)}`, { cache: "no-store" });
+      if (res.ok) {
+        const payload = await res.json() as OutreachRunSnapshot;
+        if (payload && "runId" in payload) {
+          setRunSnapshot(payload);
+          setActiveTab("results");
+        }
+      }
+    } catch { /* ignore */ }
+  }, []);
+
   /* ─── Fetch logs ───────────────────────────────────────────── */
   const fetchLogs = useCallback(async () => {
     setLogsLoading(true);
@@ -1193,7 +1206,12 @@ export default function CampaignDetailPage() {
                   </thead>
                   <tbody>
                     {runs.map((run) => (
-                      <tr key={run.runId}>
+                      <tr 
+                        key={run.runId} 
+                        onClick={() => viewPastRun(run.runId)}
+                        className="cursor-pointer hover:bg-gray-50 transition-colors"
+                        title="Click to view run details"
+                      >
                         <td className="font-mono text-xs">{run.runId}</td>
                         <td><span className={`status-chip ${statusTone(run.status)}`}>{run.status}</span></td>
                         <td>{run.totalLeads}</td>
