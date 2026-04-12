@@ -36,6 +36,8 @@ export interface RunResultRow {
   captchaStatus: string;
   confirmationMsg: string;
   estCostUsd: number;
+  formFound: boolean;
+  captchaPresent: boolean;
 }
 
 export interface OutreachRunSnapshot {
@@ -543,6 +545,16 @@ function mapResultPayload(job: OutreachRunJob, payload: Record<string, unknown>)
   const submissionStatus = String(payload.submission_status ?? "");
   const assurance = String(payload.submission_assurance ?? "");
 
+  // Properly parse "Yes"/"No" strings from the Outreach script
+  const captchaPresentRaw = String(payload.captcha_present ?? "No").trim().toLowerCase();
+  const captchaPresent = captchaPresentRaw === "yes";
+
+  // Derive formFound from fields_filled and assurance text
+  const fieldsFilled = String(payload.fields_filled ?? "-").trim();
+  const assuranceLower = assurance.toLowerCase();
+  const noFormPhrases = ["not found", "no form", "form not", "filled 0", "no contact", "unable to find"];
+  const formFound = fieldsFilled !== "-" && fieldsFilled !== "- none" && fieldsFilled !== "" && !noFormPhrases.some(p => assuranceLower.includes(p));
+
   return {
     campaignId: job.campaignId,
     campaignTitle: job.campaignTitle,
@@ -553,6 +565,8 @@ function mapResultPayload(job: OutreachRunJob, payload: Record<string, unknown>)
     captchaStatus,
     confirmationMsg: String(payload.confirmation_msg ?? assurance ?? "-") || "-",
     estCostUsd: parseCost(payload.est_cost),
+    formFound,
+    captchaPresent,
   };
 }
 

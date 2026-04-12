@@ -171,13 +171,13 @@ export default function CampaignDetailPage() {
 
   /* ─── Contact results map ─────────────────────────────────── */
   const contactResultsMap = useMemo(() => {
-    const map = new Map<string, { status: string; submitted: string; confirmationMsg: string; captchaStatus: string; contactUrl: string }>();
+    const map = new Map<string, { status: string; submitted: string; confirmationMsg: string; captchaStatus: string; contactUrl: string; formFound: boolean; captchaPresent: boolean }>();
     if (!runSnapshot?.results) return map;
     for (const res of runSnapshot.results) {
       const nUrl = normUrl(res.contactUrl);
       const rawName = (res.companyName || "").toLowerCase().trim();
       const nName = ["unknown", "n/a", "null", "undefined", ""].includes(rawName) ? "" : rawName;
-      const payload = { status: res.status, submitted: res.submitted, confirmationMsg: res.confirmationMsg, captchaStatus: res.captchaStatus, contactUrl: res.contactUrl };
+      const payload = { status: res.status, submitted: res.submitted, confirmationMsg: res.confirmationMsg, captchaStatus: res.captchaStatus, contactUrl: res.contactUrl, formFound: !!(res as Record<string, unknown>).formFound, captchaPresent: !!(res as Record<string, unknown>).captchaPresent };
       if (nUrl) map.set(`url:${nUrl}`, payload);
       if (nName) map.set(`name:${nName}`, payload);
     }
@@ -1314,12 +1314,8 @@ export default function CampaignDetailPage() {
                     activityRows.map((contact) => {
                       const result = getContactResult(contact);
                       const captcha = parseCaptchaStatus(result?.captchaStatus || "");
-                      const _conf = (result?.confirmationMsg || "").toLowerCase();
-                      const _cap = (result?.captchaStatus || "").toLowerCase();
-                      const _negatives = ["not found", "not filled", "could not find", "no form", "form not", "unable to find", "failed to find", "no contact"];
-                      const _capFoundPositive = _cap.includes("found") && !_negatives.some(n => _cap.includes(n));
-                      const _confFormPositive = (_conf.includes("form") || _conf.includes("submitted") || _conf.includes("sent") || _conf.includes("message")) && !_negatives.some(n => _conf.includes(n));
-                      const formFound = _capFoundPositive || _confFormPositive || result?.status === "success";
+                      const formFound = result ? (result.formFound ?? false) : false;
+                      const captchaFound = result ? (result.captchaPresent ?? captcha.found) : false;
                       return (
                         <tr key={contact.id} className={result?.status === "success" ? "bg-green-50/30" : result?.status === "fail" ? "bg-red-50/30" : ""}>
                           <td><StatusIcon status={result?.status ?? null} /></td>
@@ -1346,7 +1342,7 @@ export default function CampaignDetailPage() {
                               {result?.status ?? "pending"}
                             </span>
                           </td>
-                          <td className="text-center">{result ? (captcha.found ? "✅" : "❌") : "—"}</td>
+                          <td className="text-center">{result ? (captchaFound ? "✅" : "❌") : "—"}</td>
                           <td className="text-center">{result ? (captcha.solved ? "✅" : "❌") : "—"}</td>
                           <td className="text-center">{result ? (captcha.siteKeyNotFound ? "⚠️" : "—") : "—"}</td>
                           <td className="text-center">{result ? (formFound ? "✅" : "❌") : "—"}</td>

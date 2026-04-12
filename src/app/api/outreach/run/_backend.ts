@@ -109,6 +109,8 @@ function normalizeResultRow(raw: unknown): RunResultRow | null {
       asString(candidate.submission_assurance) ||
       "-",
     estCostUsd: toNumber(candidate.estCostUsd ?? candidate.est_cost, 0),
+    formFound: candidate.formFound === true || candidate.form_found === true,
+    captchaPresent: candidate.captchaPresent === true || candidate.captcha_present === true,
   };
 }
 
