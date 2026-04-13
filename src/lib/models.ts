@@ -78,6 +78,7 @@ export interface OutreachRunSnapshot {
     status: "success" | "warning" | "fail";
     captchaStatus: string;
     confirmationMsg: string;
+    fieldsFilled?: string;
     estCostUsd: number;
   }>;
   duplicatesSkipped: number;

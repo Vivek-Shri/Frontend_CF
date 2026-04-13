@@ -717,7 +717,15 @@ export default function CampaignDetailPage() {
                 {result?.confirmationMsg && (
                   <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
                     <p className="text-xs text-blue-500 uppercase tracking-wide font-medium mb-1.5">Confirmation / Details</p>
-                    <p className="text-sm text-blue-900 leading-relaxed break-words">{result.confirmationMsg}</p>
+                    <p className="text-sm text-blue-900 leading-relaxed break-words whitespace-pre-wrap">{result.confirmationMsg}</p>
+                  </div>
+                )}
+
+                {/* Fields Filled Data */}
+                {result?.fieldsFilled && result.fieldsFilled !== "-" && result.fieldsFilled !== "- none" && (
+                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 mt-3">
+                    <p className="text-xs text-indigo-500 uppercase tracking-wide font-medium mb-1.5">Form Data Submited</p>
+                    <p className="text-sm text-indigo-900 leading-relaxed break-words font-mono whitespace-pre-wrap">{result.fieldsFilled}</p>
                   </div>
                 )}
 
