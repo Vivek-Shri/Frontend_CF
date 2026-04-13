@@ -24,6 +24,7 @@ import {
   Square,
   Terminal,
   RefreshCw,
+  AlertCircle,
 } from "lucide-react";
 
 import type {
@@ -147,7 +148,7 @@ export default function CampaignDetailPage() {
   /* ─── Detail modal ───────────────────────────────────────── */
   const [selectedDetail, setSelectedDetail] = useState<{
     contact: ContactRecord;
-    result: { status: string; submitted: string; confirmationMsg: string; captchaStatus: string; contactUrl: string; estCostUsd?: number } | null;
+    result: { status: string; submitted: string; confirmationMsg: string; captchaStatus: string; contactUrl: string; estCostUsd?: number; fieldsFilled?: string } | null;
   } | null>(null);
 
   /* ─── Logs ────────────────────────────────────────────────── */
@@ -552,7 +553,7 @@ export default function CampaignDetailPage() {
           contactUrl: item.contactUrl,
           contact_url: item.contactUrl
         })),
-        force
+        force: true
       };
 
       const res = await fetch(`/api/campaigns/${campaign?.id || campaignId}/contacts/bulk`, {
