@@ -131,7 +131,23 @@ export default function ListsPage() {
 
   /* ─ Open Send to Campaign modal ─ */
   const openSendModal = useCallback(async (list: ContactList) => {
-    setSendingList(list);
+    let listWithContacts = list;
+    // If contacts aren't loaded yet (summary response), fetch the full list
+    if (!list.contacts || list.contacts.length === 0) {
+      try {
+        const detailRes = await fetch(`/api/contact-lists/${list.id}`, { cache: "no-store" });
+        if (detailRes.ok) {
+          const detailData = await detailRes.json();
+          const loadedContacts = detailData.contacts || detailData.list?.contacts || [];
+          listWithContacts = { ...list, contacts: loadedContacts };
+          // Also update the lists state so contacts are cached
+          setLists(prev => prev.map(l => l.id === list.id ? { ...l, contacts: loadedContacts } : l));
+        }
+      } catch {
+        // If fetching fails, proceed with empty contacts - sendToCampaign will show error
+      }
+    }
+    setSendingList(listWithContacts);
     setSendingDone(false);
     setSendingActive(false);
     setSendingProgress(0);
