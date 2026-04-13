@@ -30,6 +30,10 @@ export async function POST(
     );
 
     if (!result.ok) {
+      // For 409 Conflict (duplicate detection), pass full payload with duplicates array
+      if (result.status === 409) {
+        return NextResponse.json(result.payload, { status: 409 });
+      }
       return NextResponse.json(
         { error: extractError(result.payload, "Failed to bulk import contacts.") },
         { status: result.status || 500 }
