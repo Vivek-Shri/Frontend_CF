@@ -38,6 +38,7 @@ export interface RunResultRow {
   estCostUsd: number;
   formFound: boolean;
   captchaPresent: boolean;
+  fieldsFilled?: string;
 }
 
 export interface OutreachRunSnapshot {
@@ -567,6 +568,7 @@ function mapResultPayload(job: OutreachRunJob, payload: Record<string, unknown>)
     estCostUsd: parseCost(payload.est_cost),
     formFound,
     captchaPresent,
+    fieldsFilled: String(payload.fields_filled ?? "-"),
   };
 }
 

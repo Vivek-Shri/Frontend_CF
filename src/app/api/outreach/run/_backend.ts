@@ -111,6 +111,11 @@ function normalizeResultRow(raw: unknown): RunResultRow | null {
     estCostUsd: toNumber(candidate.estCostUsd ?? candidate.est_cost, 0),
     formFound: candidate.formFound === true || candidate.form_found === true,
     captchaPresent: candidate.captchaPresent === true || candidate.captcha_present === true,
+    fieldsFilled:
+      asString(candidate.fieldsFilled) ||
+      asString(candidate.fields_filled) ||
+      asString(candidate.fields_filled_data) ||
+      "-",
   };
 }
 
