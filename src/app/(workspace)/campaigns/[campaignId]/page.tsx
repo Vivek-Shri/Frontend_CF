@@ -527,26 +527,22 @@ export default function CampaignDetailPage() {
   const importFromList = useCallback(async (list: any, force = false) => {
     if (!campaign && !campaignId) return;
     setImportingListId(list.id);
-      // If contacts aren't pre-loaded (new lightweight API), fetch them now
-      if (!listContacts || listContacts.length === 0) {
+    let listContacts: any[] = [];
+    try {
+      if (!list.contacts || list.contacts.length === 0) {
         const detailRes = await fetch(`/api/contact-lists/${list.id}`);
         if (!detailRes.ok) {
           const errData = await detailRes.json();
           throw new Error(errData.error || "Failed to load list details");
         }
         const detailData = await detailRes.json();
-        listContacts = detailData.contacts;
+        listContacts = detailData.contacts || detailData.list?.contacts || [];
+      } else {
+        listContacts = list.contacts;
       }
-      if (!listContacts) throw new Error("List contacts not found");
-
-      const currentContacts = contacts || [];
-      const existingUrls = new Set(currentContacts.map(c => normUrl(c.contactUrl)));
-      const duplicates = listContacts.filter(item => existingUrls.has(normUrl(item.contactUrl)));
-      if (duplicates.length > 0) {
-        if (!window.confirm(`Warning: ${duplicates.length} duplicate URLs are already in this campaign. Want to proceed?`)) {
-          setImportingListId(null);
-          return;
-        }
+      
+      if (!listContacts || listContacts.length === 0) {
+        throw new Error("List is empty or contacts not found.");
       }
 
       const payload = {
@@ -555,7 +551,8 @@ export default function CampaignDetailPage() {
           company_name: item.companyName || "Unknown",
           contactUrl: item.contactUrl,
           contact_url: item.contactUrl
-        }))
+        })),
+        force
       };
 
       const res = await fetch(`/api/campaigns/${campaign?.id || campaignId}/contacts/bulk`, {
@@ -564,15 +561,25 @@ export default function CampaignDetailPage() {
         body: JSON.stringify(payload),
       });
 
+      if (res.status === 409) {
+        const errData = await res.json();
+        setDuplicateConflicts(errData.duplicates || []);
+        setPendingImportList(list);
+        return;
+      }
+
       if (!res.ok) throw new Error("Bulk import failed returned " + res.status);
       
       setMessage(`Successfully imported ${listContacts.length} contacts from "${list.name}".`);
       setShowImportModal(false);
+      setPendingImportList(null);
       await loadCampaignBundle();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Import failed.");
-    } finally { setImportingListId(null); }
-  }, [campaignId, loadCampaignBundle]);
+    } finally { 
+      setImportingListId(null); 
+    }
+  }, [campaignId, loadCampaignBundle, campaign]);
 
   const saveSettings = useCallback(async () => {
     if (!campaign) return;
