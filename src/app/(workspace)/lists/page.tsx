@@ -71,6 +71,8 @@ export default function ListsPage() {
   const [sendingCount, setSendingCount] = useState(0);
   const [sendingDone, setSendingDone] = useState(false);
   const [sendingActive, setSendingActive] = useState(false);
+  const [duplicateConflicts, setDuplicateConflicts] = useState<{ urlKey: string, companyName: string, campaignId: string, campaignName: string }[] | null>(null);
+  const [sendError, setSendError] = useState("");
 
   const [isFetchingLists, setIsFetchingLists] = useState(true);
   const [mounted, setMounted] = useState(false);
@@ -135,6 +137,8 @@ export default function ListsPage() {
     setSendingProgress(0);
     setSendingCount(0);
     setSelectedCampaignId("");
+    setDuplicateConflicts(null);
+    setSendError("");
     setShowSendModal(true);
     try {
       const res = await fetch("/api/campaigns?limit=100");
@@ -147,26 +151,45 @@ export default function ListsPage() {
     }
   }, []);
 
-  const sendToCampaign = useCallback(async () => {
+  const sendToCampaign = useCallback(async (force = false) => {
     if (!sendingList || !selectedCampaignId) return;
     setSendingActive(true);
-    setSendingProgress(0);
+    setDuplicateConflicts(null);
+    setSendError("");
+    setSendingProgress(50);
     setSendingCount(0);
-    let done = 0;
-    for (const item of sendingList.contacts) {
-      try {
-        await fetch(`/api/campaigns/${selectedCampaignId}/contacts`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ companyName: item.companyName || "Unknown", contactUrl: item.contactUrl }),
-        });
-      } catch { /* skip */ }
-      done++;
-      setSendingCount(done);
-      setSendingProgress(Math.floor((done / sendingList.contacts.length) * 100));
+
+    try {
+      const res = await fetch(`/api/campaigns/${selectedCampaignId}/contacts/bulk`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contacts: sendingList.contacts,
+          force
+        }),
+      });
+
+      if (res.status === 409) {
+        const errData = await res.json();
+        setSendingActive(false);
+        setDuplicateConflicts(errData.duplicates || []);
+        return;
+      }
+
+      if (!res.ok) {
+        const errData = await res.json();
+        throw new Error(errData.error || "Failed to add contacts");
+      }
+
+      const data = await res.json();
+      setSendingCount(data.inserted || sendingList.contacts.length);
+      setSendingProgress(100);
+      setSendingDone(true);
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : "Failed to add contacts");
+    } finally {
+      setSendingActive(false);
     }
-    setSendingDone(true);
-    setSendingActive(false);
   }, [sendingList, selectedCampaignId]);
 
   /* ─ Create list flow ─ */
@@ -294,7 +317,7 @@ export default function ListsPage() {
       }
 
       const created = await res.json();
-      
+
       const newList: ContactList = {
         id: created.id,
         name: created.name,
@@ -314,7 +337,7 @@ export default function ListsPage() {
   const deleteList = async (listId: string) => {
     const confirmed = globalThis.confirm("Delete this list and all its contacts?");
     if (!confirmed) return;
-    
+
     try {
       const res = await fetch(`/api/contact-lists/${listId}`, {
         method: "DELETE",
@@ -404,8 +427,13 @@ export default function ListsPage() {
               {!sendingActive && <button onClick={() => setShowSendModal(false)} className="p-1 text-gray-400 hover:text-gray-600"><X size={20} /></button>}
             </div>
             <div className="p-6 space-y-4">
-              {!sendingDone && !sendingActive && (
+              {!sendingDone && !sendingActive && !duplicateConflicts && (
                 <>
+                  {sendError && (
+                    <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm mb-3">
+                      <AlertCircle className="inline mr-1" size={14} /> {sendError}
+                    </div>
+                  )}
                   {campaigns.length === 0 ? (
                     <p className="text-sm text-gray-500 text-center py-4">No campaigns found. Create one first.</p>
                   ) : (
@@ -425,7 +453,7 @@ export default function ListsPage() {
                   <div className="flex gap-3">
                     <button
                       type="button"
-                      onClick={() => void sendToCampaign()}
+                      onClick={() => void sendToCampaign(false)}
                       disabled={!selectedCampaignId}
                       className="flex-1 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
                     >
@@ -436,6 +464,43 @@ export default function ListsPage() {
                     </button>
                   </div>
                 </>
+              )}
+
+              {duplicateConflicts && (
+                <div className="space-y-4">
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <h4 className="text-amber-800 font-bold flex items-center gap-2 mb-2">
+                      <AlertCircle size={18} /> Duplicate Companies Detected
+                    </h4>
+                    <p className="text-sm text-amber-700 mb-2">
+                      The following companies already exist in other campaigns. Would you like to continue adding them anyway?
+                    </p>
+                    <div className="max-h-32 overflow-y-auto bg-white/50 rounded border border-amber-100 p-2 text-xs text-amber-900 font-mono">
+                      {duplicateConflicts.slice(0, 10).map((dup, i) => (
+                        <div key={i} className="mb-1 pb-1 border-b border-amber-100 last:border-0 truncate">
+                          <span className="font-semibold">{dup.companyName}</span> belongs to <span className="italic">{dup.campaignName}</span>
+                        </div>
+                      ))}
+                      {duplicateConflicts.length > 10 && (
+                        <div className="mt-1 font-semibold text-amber-800">
+                          + {duplicateConflicts.length - 10} more duplicates...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void sendToCampaign(true)}
+                      className="flex-1 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition-colors"
+                    >
+                      Continue
+                    </button>
+                    <button type="button" onClick={() => setShowSendModal(false)} className="px-5 py-2.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
               )}
 
               {sendingActive && (

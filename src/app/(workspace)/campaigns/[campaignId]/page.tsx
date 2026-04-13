@@ -501,19 +501,24 @@ export default function CampaignDetailPage() {
     } finally { setDeletingAllContacts(false); }
   }, [campaignId]);
 
-  const toggleInterested = useCallback(async (contact: ContactRecord) => {
+  const updateReplyStatus = useCallback(async (contact: ContactRecord, newStatus: string) => {
     setTogglingContactId(contact.id);
+    setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, replyStatus: newStatus } : c));
     try {
       const res = await fetch(`/api/campaigns/${campaignId}/contacts/${contact.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ isInterested: !contact.isInterested }),
+        body: JSON.stringify({ replyStatus: newStatus }),
       });
       const payload = await res.json() as ContactRecord | { error?: string };
-      if (!res.ok || !("id" in payload)) { setMessage(("error" in payload && payload.error) || "Update failed."); return; }
-      setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, isInterested: !c.isInterested } : c));
+      if (!res.ok || !("id" in payload)) { 
+        setMessage(("error" in payload && payload.error) || "Update failed."); 
+        // Revert on error
+        setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, replyStatus: contact.replyStatus } : c));
+      }
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Update failed.");
+      setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, replyStatus: contact.replyStatus } : c));
     } finally { setTogglingContactId(null); }
   }, [campaignId]);
 
@@ -1042,7 +1047,7 @@ export default function CampaignDetailPage() {
                     <th>Company</th>
                     <th>Domain</th>
                     <th>Contact URL</th>
-                    <th>Interested</th>
+                    <th>Reply?</th>
                     <th>Added</th>
                     <th></th>
                   </tr>
@@ -1059,19 +1064,17 @@ export default function CampaignDetailPage() {
                         </a>
                       </td>
                       <td>
-                        <button
-                          type="button"
-                          onClick={() => void toggleInterested(contact)}
+                        <select
                           disabled={togglingContactId === contact.id}
-                          title={contact.isInterested ? "Mark as not interested" : "Mark as interested"}
-                          className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-colors ${
-                            contact.isInterested
-                              ? "border-pink-500 bg-pink-50 text-pink-600"
-                              : "border-gray-300 hover:border-pink-400"
-                          }`}
+                          className="field-input py-1 px-2 h-auto text-sm bg-gray-50 border-gray-200"
+                          style={{ minWidth: "125px" }}
+                          value={contact.replyStatus || ""}
+                          onChange={(e) => void updateReplyStatus(contact, e.target.value)}
                         >
-                          {contact.isInterested && <Heart size={12} fill="currentColor" />}
-                        </button>
+                          <option value="">--</option>
+                          <option value="interested">Interested</option>
+                          <option value="not_interested">Not Interested</option>
+                        </select>
                       </td>
                       <td className="text-gray-400 text-xs">{formatDateTime(contact.createdAt)}</td>
                       <td>

@@ -56,7 +56,8 @@ export interface ContactRecord {
   location?: string;
   industry?: string;
   notes?: string;
-  isInterested: boolean;
+  isInterested?: boolean;
+  replyStatus?: string;
   createdAt: string;
   updatedAt: string;
 }
