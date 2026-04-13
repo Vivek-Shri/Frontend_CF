@@ -123,6 +123,8 @@ export default function CampaignDetailPage() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [availableLists, setAvailableLists] = useState<ContactList[]>([]);
   const [importingListId, setImportingListId] = useState<string | null>(null);
+  const [duplicateConflicts, setDuplicateConflicts] = useState<{urlKey: string, companyName: string, campaignId: string, campaignName: string}[] | null>(null);
+  const [pendingImportList, setPendingImportList] = useState<any>(null);
   /* Load lists for import */
   const refreshLists = useCallback(async () => {
     try {
@@ -522,12 +524,9 @@ export default function CampaignDetailPage() {
     } finally { setTogglingContactId(null); }
   }, [campaignId]);
 
-  const importFromList = useCallback(async (list: ContactList) => {
-    if (!userId) return;
+  const importFromList = useCallback(async (list: any, force = false) => {
+    if (!campaign && !campaignId) return;
     setImportingListId(list.id);
-    setMessage("");
-    try {
-      let listContacts = list.contacts;
       // If contacts aren't pre-loaded (new lightweight API), fetch them now
       if (!listContacts || listContacts.length === 0) {
         const detailRes = await fetch(`/api/contact-lists/${list.id}`);
@@ -788,10 +787,45 @@ export default function CampaignDetailPage() {
           <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl flex flex-col max-h-[80vh]">
             <div className="flex justify-between items-center px-6 py-4 border-b border-gray-100 shrink-0">
               <h3 className="text-lg font-semibold text-gray-900">Import from Contact List</h3>
-              <button onClick={() => setShowImportModal(false)} className="p-1 text-gray-400 hover:text-gray-600"><X size={20} /></button>
+              <button onClick={() => { setShowImportModal(false); setDuplicateConflicts(null); setPendingImportList(null); }} className="p-1 text-gray-400 hover:text-gray-600"><X size={20} /></button>
             </div>
             <div className="p-6 overflow-y-auto flex-1">
-              {availableLists.length === 0 ? (
+              {duplicateConflicts ? (
+                <div className="space-y-4">
+                  <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <h4 className="text-amber-800 font-bold flex items-center gap-2 mb-2">
+                      <AlertCircle size={18} /> Duplicate Companies Detected
+                    </h4>
+                    <p className="text-sm text-amber-700 mb-2">
+                      The following companies already exist in other campaigns. Would you like to continue adding them anyway?
+                    </p>
+                    <div className="max-h-32 overflow-y-auto bg-white/50 rounded border border-amber-100 p-2 text-xs text-amber-900 font-mono">
+                      {duplicateConflicts.slice(0, 10).map((dup, i) => (
+                        <div key={i} className="mb-1 pb-1 border-b border-amber-100 last:border-0 truncate">
+                          <span className="font-semibold">{dup.companyName}</span> belongs to <span className="italic">{dup.campaignName}</span>
+                        </div>
+                      ))}
+                      {duplicateConflicts.length > 10 && (
+                        <div className="mt-1 font-semibold text-amber-800">
+                          + {duplicateConflicts.length - 10} more duplicates...
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    <button
+                      type="button"
+                      onClick={() => void importFromList(pendingImportList, true)}
+                      className="flex-1 px-5 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition-colors"
+                    >
+                      {importingListId ? "Importing..." : "Continue Anyway"}
+                    </button>
+                    <button type="button" onClick={() => { setDuplicateConflicts(null); setPendingImportList(null); }} className="px-5 py-2.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : availableLists.length === 0 ? (
                 <div className="text-center py-8">
                   <Database size={40} className="mx-auto text-gray-300 mb-3" strokeWidth={1} />
                   <p className="text-gray-500 text-sm">No contact lists found. Create one from the Contact Lists page.</p>
@@ -806,7 +840,7 @@ export default function CampaignDetailPage() {
                       </div>
                       <button
                         type="button"
-                        onClick={() => void importFromList(list)}
+                        onClick={() => void importFromList(list, false)}
                         disabled={importingListId === list.id}
                         className="px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-md hover:bg-blue-700 disabled:bg-gray-300 transition-colors"
                       >
