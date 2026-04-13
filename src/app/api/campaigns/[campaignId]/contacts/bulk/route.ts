@@ -30,9 +30,11 @@ export async function POST(
     );
 
     if (!result.ok) {
-      // For 409 Conflict (duplicate detection), pass full payload with duplicates array
+      // For 409 Conflict (duplicate detection), unwrap FastAPI's {detail: {...}} wrapper
+      // so frontend gets {duplicates: [...]} at top level
       if (result.status === 409) {
-        return NextResponse.json(result.payload, { status: 409 });
+        const unwrapped = (result.payload as any)?.detail || result.payload;
+        return NextResponse.json(unwrapped, { status: 409 });
       }
       return NextResponse.json(
         { error: extractError(result.payload, "Failed to bulk import contacts.") },
