@@ -563,13 +563,32 @@ export default function CampaignDetailPage() {
       });
 
       if (res.status === 409) {
-        const errData = await res.json();
-        setDuplicateConflicts(errData.duplicates || []);
-        setPendingImportList(list);
+        try {
+          const errData = await res.json();
+          const dups = errData.duplicates || errData.detail?.duplicates || [];
+          if (dups.length > 0) {
+            setDuplicateConflicts(dups);
+            setPendingImportList(list);
+            return;
+          }
+        } catch {
+          // JSON parsing failed — silently retry with force
+        }
+        // If we couldn't parse duplicates or array was empty, auto-force import
+        const retryRes = await fetch(`/api/campaigns/${campaign?.id || campaignId}/contacts/bulk`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, force: true }),
+        });
+        if (!retryRes.ok) throw new Error("Import failed. Please try again.");
+        setMessage(`Successfully imported ${listContacts.length} contacts from "${list.name}".`);
+        setShowImportModal(false);
+        setPendingImportList(null);
+        await loadCampaignBundle();
         return;
       }
 
-      if (!res.ok) throw new Error("Bulk import failed returned " + res.status);
+      if (!res.ok) throw new Error("Import failed. Please try again.");
       
       setMessage(`Successfully imported ${listContacts.length} contacts from "${list.name}".`);
       setShowImportModal(false);
