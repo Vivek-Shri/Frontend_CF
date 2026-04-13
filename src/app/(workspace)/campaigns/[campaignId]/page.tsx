@@ -553,7 +553,7 @@ export default function CampaignDetailPage() {
           contactUrl: item.contactUrl,
           contact_url: item.contactUrl
         })),
-        force: true
+        force
       };
 
       const res = await fetch(`/api/campaigns/${campaign?.id || campaignId}/contacts/bulk`, {
