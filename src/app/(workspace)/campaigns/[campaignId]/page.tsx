@@ -293,6 +293,9 @@ export default function CampaignDetailPage() {
       if (cData.lastRun) {
         // If run is active, restore the snapshot immediately for polling
         setRunSnapshot((prev: OutreachRunSnapshot | null) => {
+          // If we already have an active run with a DIFFERENT runId, do NOT overwrite it
+          // (the DB's lastRun may still reference an old run while a new one just started)
+          if (prev && isActiveRun(prev.status) && prev.runId !== cData.lastRun?.runId) return prev;
           if (prev && prev.runId === cData.lastRun?.runId) return prev;
           return {
             runId: cData.lastRun!.runId,
@@ -307,12 +310,18 @@ export default function CampaignDetailPage() {
             startedAt: cData.lastRun!.startedAt,
           } as OutreachRunSnapshot;
         });
-        // Fetch full status (with results) to populate stats
-        fetch(`/api/outreach/run?runId=${encodeURIComponent(cData.lastRun.runId)}`, { cache: "no-store" })
+        // Fetch full status (with results) to populate stats — but only for this specific lastRun
+        const lastRunId = cData.lastRun.runId;
+        fetch(`/api/outreach/run?runId=${encodeURIComponent(lastRunId)}`, { cache: "no-store" })
           .then(r => r.ok ? r.json() : null)
           .then((snap: OutreachRunSnapshot | null) => {
             if (snap && "runId" in snap) {
-              setRunSnapshot(prev => mergeSnapshot(prev, snap));
+              // Only apply if the current snapshot still matches this lastRun
+              // (prevents stale fetch from overwriting a newly started run)
+              setRunSnapshot(prev => {
+                if (prev && isActiveRun(prev.status) && prev.runId !== snap.runId) return prev;
+                return mergeSnapshot(prev, snap);
+              });
             }
           })
           .catch(() => { /* ignore */ });
@@ -370,7 +379,11 @@ export default function CampaignDetailPage() {
       const saved = localStorage.getItem(`run-snapshot-${userId}-${campaignId}`);
       if (saved) {
         const snap = JSON.parse(saved) as OutreachRunSnapshot;
-        if (snap?.runId) setRunSnapshot(prev => mergeSnapshot(prev, snap));
+        if (snap?.runId) setRunSnapshot(prev => {
+          // Don't overwrite an active run with a cached snapshot from a different run
+          if (prev && isActiveRun(prev.status) && prev.runId !== snap.runId) return prev;
+          return mergeSnapshot(prev, snap);
+        });
       }
     } catch { /* ignore */ }
   }, [campaignId, userId]);
