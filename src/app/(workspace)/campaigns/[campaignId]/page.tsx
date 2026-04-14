@@ -51,6 +51,28 @@ function isActiveRun(status: string) {
   return ["running", "queued"].includes(status.trim().toLowerCase());
 }
 
+/**
+ * Safely merge a new snapshot with the previous one.
+ * Prevents overwriting accumulated results with a degraded response
+ * (e.g., when the backend returns fewer results for a completed run).
+ */
+function mergeSnapshot(
+  prev: OutreachRunSnapshot | null,
+  next: OutreachRunSnapshot,
+): OutreachRunSnapshot {
+  if (!prev || prev.runId !== next.runId) return next;
+  // If the incoming snapshot has fewer results, keep the old results
+  // but update metadata (status, progress, etc.)
+  if (next.results.length < prev.results.length) {
+    return {
+      ...next,
+      results: prev.results,
+      processedLeads: Math.max(next.processedLeads, prev.processedLeads),
+    };
+  }
+  return next;
+}
+
 /* ─── Captcha Status Parser ────────────────────────────────── */
 function parseCaptchaStatus(captchaStatus: string) {
   const s = (captchaStatus || "").toLowerCase();
@@ -289,7 +311,9 @@ export default function CampaignDetailPage() {
         fetch(`/api/outreach/run?runId=${encodeURIComponent(cData.lastRun.runId)}`, { cache: "no-store" })
           .then(r => r.ok ? r.json() : null)
           .then((snap: OutreachRunSnapshot | null) => {
-            if (snap && "runId" in snap) setRunSnapshot(snap);
+            if (snap && "runId" in snap) {
+              setRunSnapshot(prev => mergeSnapshot(prev, snap));
+            }
           })
           .catch(() => { /* ignore */ });
       }
@@ -306,7 +330,7 @@ export default function CampaignDetailPage() {
       if (res.ok) {
         const payload = await res.json() as OutreachRunSnapshot;
         if (payload && "runId" in payload) {
-          setRunSnapshot(payload);
+          setRunSnapshot(prev => mergeSnapshot(prev, payload));
           setActiveTab("results");
         }
       }
@@ -346,25 +370,33 @@ export default function CampaignDetailPage() {
       const saved = localStorage.getItem(`run-snapshot-${userId}-${campaignId}`);
       if (saved) {
         const snap = JSON.parse(saved) as OutreachRunSnapshot;
-        if (snap?.runId) setRunSnapshot(snap);
+        if (snap?.runId) setRunSnapshot(prev => mergeSnapshot(prev, snap));
       }
     } catch { /* ignore */ }
   }, [campaignId, userId]);
 
   useEffect(() => {
     if (!runSnapshot || !userId) return;
+    // Only persist if the snapshot has results — avoid caching degraded snapshots
+    if (runSnapshot.results.length === 0 && runSnapshot.processedLeads > 0) return;
     try { localStorage.setItem(`run-snapshot-${userId}-${campaignId}`, JSON.stringify(runSnapshot)); }
     catch { /* ignore */ }
   }, [runSnapshot, campaignId, userId]);
 
   /* ─── Poll active run ─────────────────────────────────────── */
   const poll404CountRef = React.useRef(0);
+  const runSnapshotRef = React.useRef(runSnapshot);
+  runSnapshotRef.current = runSnapshot;
+
+  // Track run identity for polling lifecycle (avoids re-mounting on every result update)
+  const activeRunId = runSnapshot && isActiveRun(runSnapshot.status) ? runSnapshot.runId : null;
+
   useEffect(() => {
-    if (!runSnapshot || !isActiveRun(runSnapshot.status)) return;
+    if (!activeRunId) return;
     poll404CountRef.current = 0; // reset on re-mount
     const timer = globalThis.setInterval(async () => {
       try {
-        const res = await fetch(`/api/outreach/run?runId=${encodeURIComponent(runSnapshot.runId)}`, { cache: "no-store" });
+        const res = await fetch(`/api/outreach/run?runId=${encodeURIComponent(activeRunId)}`, { cache: "no-store" });
         if (res.status === 404) {
           // Tolerate transient 404s — only complete after 3 consecutive misses
           poll404CountRef.current += 1;
@@ -377,12 +409,12 @@ export default function CampaignDetailPage() {
         poll404CountRef.current = 0; // reset on success
         const payload = await res.json() as OutreachRunSnapshot | { error?: string };
         if (!res.ok || !("runId" in payload)) return;
-        setRunSnapshot(payload);
-        if (!isActiveRun(payload.status)) void loadCampaignBundle();
+        setRunSnapshot(prev => mergeSnapshot(prev, payload as OutreachRunSnapshot));
+        if (!isActiveRun((payload as OutreachRunSnapshot).status)) void loadCampaignBundle();
       } catch { /* keep stable */ }
     }, RUN_POLL_INTERVAL_MS);
     return () => globalThis.clearInterval(timer);
-  }, [loadCampaignBundle, runSnapshot]);
+  }, [loadCampaignBundle, activeRunId]);
 
   /* ─── Actions ─────────────────────────────────────────────── */
   const startRun = useCallback(async () => {
