@@ -1696,6 +1696,10 @@ export default function CampaignDetailPage() {
                                 <span className="truncate max-w-[120px] inline-block">{result.detectedFormUrl}</span>
                                 <ExternalLink size={10} />
                               </a>
+                            ) : (result as any).formFound || result.submitted === "Yes" ? (
+                              <span className="text-emerald-600 font-medium text-[11px]">Yes</span>
+                            ) : result.status ? (
+                              <span className="text-gray-500 font-medium text-[11px]">—</span>
                             ) : (
                               <span className="text-gray-400 text-[10px]">Pending</span>
                             )}
