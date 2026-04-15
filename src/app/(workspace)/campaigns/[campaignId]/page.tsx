@@ -180,7 +180,11 @@ export default function CampaignDetailPage() {
       const nUrl = normUrl(res.contactUrl);
       const rawName = (res.companyName || "").toLowerCase().trim();
       const nName = ["unknown", "n/a", "null", "undefined", ""].includes(rawName) ? "" : rawName;
-      const payload = { status: res.status, submitted: res.submitted, confirmationMsg: res.confirmationMsg, captchaStatus: res.captchaStatus, contactUrl: res.contactUrl, formFound: !!(res as Record<string, unknown>).formFound, captchaPresent: !!(res as Record<string, unknown>).captchaPresent };
+      const payload = {
+        ...res,
+        formFound: !!(res as any).formFound,
+        captchaPresent: !!(res as any).captchaPresent
+      };
       if (nUrl) map.set(`url:${nUrl}`, payload);
       if (nName) map.set(`name:${nName}`, payload);
     }
