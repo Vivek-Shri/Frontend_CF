@@ -724,6 +724,7 @@ export default function CampaignDetailPage() {
 
   const exportResultsToCsv = useCallback(() => {
     const headers = ["Step", "Company", "Website URL", "Contact URL", "Status", "Strategy", "Method", "Tokens (I/O)", "BW (KB)", "Submitted", "Form Data", "Confirmation"];
+    if (!runSnapshot) return;
     const rows = runSnapshot.results.map(r => [
       `"Step ${(r.step_index || 0) + 1}"`,
       `"${(r.companyName || "").replace(/"/g, '""')}"`,

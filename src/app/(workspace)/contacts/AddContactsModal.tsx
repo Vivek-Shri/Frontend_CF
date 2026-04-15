@@ -19,6 +19,7 @@ import {
 
 interface ParsedRow {
   companyName: string;
+  websiteUrl?: string;
   contactUrl: string;
   domain: string;
 }

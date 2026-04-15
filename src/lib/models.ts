@@ -26,6 +26,8 @@ export interface CampaignStep {
   daySequence: number;
   timeOfDay: string;
   type: "immediate" | "normal";
+  delayValue?: number;
+  delayUnit?: string;
   enabled: boolean;
 }
 

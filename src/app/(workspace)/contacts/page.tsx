@@ -34,7 +34,7 @@ import type { ContactRecord, PaginationMeta } from "@/lib/models";
 import { formatDateTime } from "@/lib/ui";
 
 /* ─── Local List Types ─────────────────────────────────────────── */
-interface ListContact { companyName: string; contactUrl: string; }
+interface ListContact { companyName: string; websiteUrl?: string; contactUrl: string; }
 interface ContactList { id: string; name: string; contacts: ListContact[]; createdAt: string; }
 interface CampaignOption { id: string; name: string; }
 

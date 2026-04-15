@@ -30,5 +30,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "cf-submission-frontend", "clean_frontend_export", "frontend_restore_stage", "recover_frontend", "true_recovery"]
 }
