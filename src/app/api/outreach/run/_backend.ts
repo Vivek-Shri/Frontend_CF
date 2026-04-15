@@ -1,6 +1,6 @@
 import type { OutreachRunSnapshot, RunResultRow, RunStatus } from "./_store";
 
-const LOCAL_BACKEND_URL = "http://64.227.188.12:8001";
+const LOCAL_BACKEND_URL = "http://127.0.0.1:8000";
 const LOG_TAIL = 200;
 
 type RuntimeEnv = Record<string, string | undefined>;
@@ -57,6 +57,23 @@ function asString(value: unknown): string {
   return "";
 }
 
+function asStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const result: Record<string, string> = {};
+  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.trim();
+    const normalizedValue = asString(rawValue).trim();
+    if (normalizedKey && normalizedValue) {
+      result[normalizedKey] = normalizedValue;
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 function mapRunStatus(rawStatus: string, runningFlag: boolean): RunStatus {
   const status = rawStatus.trim().toLowerCase();
 
@@ -93,6 +110,10 @@ function normalizeResultRow(raw: unknown): RunResultRow | null {
   const statusRaw = asString(candidate.status).toLowerCase();
   const status: "success" | "fail" | "warning" =
     statusRaw === "success" || statusRaw === "warning" ? statusRaw : "fail";
+  const fieldsFilledData =
+    asStringRecord(candidate.fieldsFilledData) ||
+    asStringRecord(candidate.filled_data) ||
+    asStringRecord(candidate.fields_filled_data);
 
   return {
     campaignId: asString(candidate.campaignId) || asString(candidate.campaign_id) || "backend-run",
@@ -116,6 +137,7 @@ function normalizeResultRow(raw: unknown): RunResultRow | null {
       asString(candidate.fields_filled) ||
       asString(candidate.fields_filled_data) ||
       "-",
+    fieldsFilledData,
   };
 }
 
@@ -385,7 +407,7 @@ export async function fetchBackendSnapshot(
 
     if (logsResponse.ok) {
       const logsPayload = await parseJsonObject(logsResponse);
-      logs = collectLogs(logsPayload?.logs);
+      logs = collectLogs(logsPayload?.logs ?? logsPayload?.lines);
     }
   }
 

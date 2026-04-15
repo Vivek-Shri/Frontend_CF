@@ -11,6 +11,7 @@ export async function GET(request: Request) {
   if (!session?.user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  const sessionUser = session.user as { id?: string; isAdmin?: boolean };
 
   const url = new URL(request.url);
   const run_id = url.searchParams.get("run_id")?.trim();
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
     const result = await backendJson(
       backendUrl,
       { method: "GET" },
-      { userId: (session.user as any).id, isAdmin: (session.user as any).isAdmin }
+      { userId: sessionUser.id, isAdmin: sessionUser.isAdmin === true }
     );
 
     if (!result.ok) {
@@ -33,7 +34,17 @@ export async function GET(request: Request) {
       );
     }
 
-    return NextResponse.json(result.payload ?? { lines: [] }, { status: 200 });
+    const payload =
+      result.payload && typeof result.payload === "object" && !Array.isArray(result.payload)
+        ? (result.payload as Record<string, unknown>)
+        : {};
+    const logs = Array.isArray(payload.logs)
+      ? payload.logs
+      : Array.isArray(payload.lines)
+        ? payload.lines
+        : [];
+
+    return NextResponse.json({ ...payload, logs, lines: logs }, { status: 200 });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Error loading logs" }, { status: 500 });
   }

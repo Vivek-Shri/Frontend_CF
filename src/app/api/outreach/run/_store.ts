@@ -39,6 +39,7 @@ export interface RunResultRow {
   formFound: boolean;
   captchaPresent: boolean;
   fieldsFilled?: string;
+  fieldsFilledData?: Record<string, string>;
 }
 
 export interface OutreachRunSnapshot {
@@ -196,6 +197,23 @@ function parseCost(value: unknown): number {
     return 0;
   }
   return numeric;
+}
+
+function asStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const result: Record<string, string> = {};
+  for (const [key, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedKey = key.trim();
+    const normalizedValue = String(rawValue ?? "").trim();
+    if (normalizedKey && normalizedValue) {
+      result[normalizedKey] = normalizedValue;
+    }
+  }
+
+  return Object.keys(result).length > 0 ? result : undefined;
 }
 
 function defaultSubmissionState(): SubmissionState {
@@ -545,6 +563,10 @@ function mapResultPayload(job: OutreachRunJob, payload: Record<string, unknown>)
   const captchaStatus = String(payload.captcha_status ?? "n/a");
   const submissionStatus = String(payload.submission_status ?? "");
   const assurance = String(payload.submission_assurance ?? "");
+  const fieldsFilledData =
+    asStringRecord(payload.fields_filled_data) ||
+    asStringRecord(payload.filled_data) ||
+    asStringRecord(payload.fieldsFilledData);
 
   // Properly parse "Yes"/"No" strings from the Outreach script
   const captchaPresentRaw = String(payload.captcha_present ?? "No").trim().toLowerCase();
@@ -569,6 +591,7 @@ function mapResultPayload(job: OutreachRunJob, payload: Record<string, unknown>)
     formFound,
     captchaPresent,
     fieldsFilled: String(payload.fields_filled ?? "-"),
+    fieldsFilledData,
   };
 }
 

@@ -740,7 +740,11 @@ export default function CampaignDetailPage() {
       `"${(r as any).inputTokens || 0} / ${(r as any).outputTokens || 0}"`,
       `"${(r as any).bandwidthKb || 0}"`,
       `"${r.submitted || ""}"`,
-      `"${(r.fieldsFilled || "").replace(/"/g, '""')}"`,
+      `"${(
+        r.fieldsFilledData && Object.keys(r.fieldsFilledData).length > 0
+          ? JSON.stringify(r.fieldsFilledData)
+          : (r.fieldsFilled || "")
+      ).replace(/"/g, '""')}"`,
       `"${(r.confirmationMsg || "").replace(/"/g, '""')}"`,
     ]);
     const csv = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
