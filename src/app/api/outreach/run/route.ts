@@ -5,6 +5,7 @@ import { authOptions } from "@/app/api/auth/[...nextauth]/route";
 import {
   buildSnapshotFromStartPayload,
   extractBackendErrorMessage,
+  fetchBackendRunResults,
   fetchBackendSnapshot,
   parseJsonObject,
   resolveBackendBaseUrl,
@@ -171,11 +172,18 @@ export async function GET(request: Request) {
   try {
     const options = { userId: (session.user as any).id, isAdmin: (session.user as any).isAdmin, includeLogs: false };
     const snapshot = await fetchBackendSnapshot(runId, options);
-    if (!snapshot) {
-      return NextResponse.json({ error: "Run not found." }, { status: 404 });
+    if (snapshot) {
+      return NextResponse.json(snapshot, { status: 200 });
     }
 
-    return NextResponse.json(snapshot, { status: 200 });
+    // Fallback: the run may be completed and evicted from active memory.
+    // Try fetching persisted results from the backend's history/results endpoints.
+    const resultsSnapshot = await fetchBackendRunResults(runId, options);
+    if (resultsSnapshot) {
+      return NextResponse.json(resultsSnapshot, { status: 200 });
+    }
+
+    return NextResponse.json({ error: "Run not found." }, { status: 404 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to fetch run status.";
     return NextResponse.json({ error: message }, { status: 500 });

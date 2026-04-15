@@ -45,32 +45,10 @@ interface CampaignRunsResponse { runs: CampaignRunSummary[]; }
 
 const RUN_POLL_INTERVAL_MS = 1500;
 type Tab = "contacts" | "activity" | "results" | "editor" | "settings";
-type FilterMode = "all" | "success" | "fail" | "pending" | "warning";
+type FilterMode = "all" | "success" | "fail" | "pending";
 
 function isActiveRun(status: string) {
   return ["running", "queued"].includes(status.trim().toLowerCase());
-}
-
-/**
- * Safely merge a new snapshot with the previous one.
- * Prevents overwriting accumulated results with a degraded response
- * (e.g., when the backend returns fewer results for a completed run).
- */
-function mergeSnapshot(
-  prev: OutreachRunSnapshot | null,
-  next: OutreachRunSnapshot,
-): OutreachRunSnapshot {
-  if (!prev || prev.runId !== next.runId) return next;
-  // If the incoming snapshot has fewer results, keep the old results
-  // but update metadata (status, progress, etc.)
-  if (next.results.length < prev.results.length) {
-    return {
-      ...next,
-      results: prev.results,
-      processedLeads: Math.max(next.processedLeads, prev.processedLeads),
-    };
-  }
-  return next;
 }
 
 /* ─── Captcha Status Parser ────────────────────────────────── */
@@ -83,12 +61,10 @@ function parseCaptchaStatus(captchaStatus: string) {
   };
 }
 
-/* ─── Status Icon Helper ───────────────────────────────────── */
 const StatusIcon = ({ status }: { status: string | null }) => {
   if (!status) return <Clock size={14} style={{ color: "#9ca3af" }} />;
-  if (status === "success") return <CheckCircle2 size={14} style={{ color: "#16a34a" }} />;
-  if (status === "fail") return <XCircle size={14} style={{ color: "#dc2626" }} />;
-  if (status === "warning") return <AlertTriangle size={14} style={{ color: "#d97706" }} />;
+  if (status === "success") return <CheckCircle2 size={14} style={{ color: "#10b981" }} />;
+  if (status === "fail") return <XCircle size={14} style={{ color: "#ef4444" }} />;
   return <Clock size={14} style={{ color: "#9ca3af" }} />;
 };
 
@@ -131,6 +107,8 @@ export default function CampaignDetailPage() {
   const [runSnapshot, setRunSnapshot] = useState<OutreachRunSnapshot | null>(null);
   const [startingRun, setStartingRun] = useState(false);
   const [stoppingRun, setStoppingRun] = useState(false);
+  const [resultsLoading, setResultsLoading] = useState(false);
+  const [report, setReport] = useState<any>(null);
 
   /* ─── Activity filter/search ──────────────────────────────── */
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
@@ -146,7 +124,7 @@ export default function CampaignDetailPage() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [availableLists, setAvailableLists] = useState<ContactList[]>([]);
   const [importingListId, setImportingListId] = useState<string | null>(null);
-  const [duplicateConflicts, setDuplicateConflicts] = useState<{urlKey: string, companyName: string, campaignId: string, campaignName: string}[] | null>(null);
+  const [duplicateConflicts, setDuplicateConflicts] = useState<{ urlKey: string, companyName: string, campaignId: string, campaignName: string }[] | null>(null);
   const [pendingImportList, setPendingImportList] = useState<any>(null);
   /* Load lists for import */
   const refreshLists = useCallback(async () => {
@@ -170,7 +148,7 @@ export default function CampaignDetailPage() {
   /* ─── Detail modal ───────────────────────────────────────── */
   const [selectedDetail, setSelectedDetail] = useState<{
     contact: ContactRecord;
-    result: { status: string; submitted: string; confirmationMsg: string; captchaStatus: string; contactUrl: string; estCostUsd?: number; fieldsFilled?: string } | null;
+    result: { status: string; submitted: string; confirmationMsg: string; captchaStatus: string; contactUrl: string; detectedFormUrl?: string; estCostUsd?: number; fieldsFilled?: string; fieldsFilledData?: Record<string, string> } | null;
   } | null>(null);
 
   /* ─── Logs ────────────────────────────────────────────────── */
@@ -218,16 +196,15 @@ export default function CampaignDetailPage() {
 
   /* ─── Stats ───────────────────────────────────────────────── */
   const stats = useMemo(() => {
-    let success = 0, fail = 0, warning = 0, pending = 0;
+    let success = 0, fail = 0, pending = 0;
     for (const c of contacts) {
       const r = getContactResult(c);
       if (!r) pending++;
       else if (r.status === "success") success++;
-      else if (r.status === "fail") fail++;
-      else if (r.status === "warning") warning++;
+      else if (r.status === "fail" || r.status === "warning") fail++;
       else pending++;
     }
-    return { total: contacts.length, success, fail, warning, pending };
+    return { total: contacts.length, success, fail, pending };
   }, [contacts, getContactResult]);
 
   /* ─── Filtered activity rows ──────────────────────────────── */
@@ -236,8 +213,8 @@ export default function CampaignDetailPage() {
       const r = getContactResult(c);
       const matchesFilter =
         filterMode === "all" ? true :
-        filterMode === "pending" ? !r :
-        r?.status === filterMode;
+          filterMode === "pending" ? !r :
+            r?.status === filterMode || (filterMode === "fail" && r?.status === "warning");
       const search = searchActivity.trim().toLowerCase();
       const matchesSearch = !search ||
         c.companyName.toLowerCase().includes(search) ||
@@ -245,6 +222,23 @@ export default function CampaignDetailPage() {
       return matchesFilter && matchesSearch;
     });
   }, [contacts, filterMode, searchActivity, getContactResult]);
+
+  /* ─── Stepped activity results (for Results tab) ─────────────── */
+  const steppedResults = useMemo(() => {
+    if (!runSnapshot?.results) return [];
+    return runSnapshot.results
+      .filter(r => {
+        const matchesFilter = filterMode === "all" ? true :
+          filterMode === "fail" ? (r.status === "fail" || r.status === "warning") :
+          r.status === filterMode;
+        const search = searchActivity.trim().toLowerCase();
+        const matchesSearch = !search ||
+          (r.companyName || "").toLowerCase().includes(search) ||
+          (r.contactUrl || "").toLowerCase().includes(search);
+        return matchesFilter && matchesSearch;
+      })
+      .sort((a, b) => (b.step_index || 0) - (a.step_index || 0)); // Sort by newest step descending
+  }, [runSnapshot?.results, filterMode, searchActivity]);
 
   /* ─── Filtered contact rows ───────────────────────────────── */
   const filteredContacts = useMemo(() => {
@@ -262,69 +256,85 @@ export default function CampaignDetailPage() {
     setLoading(true);
     setError("");
     try {
-      const [cRes, coRes, rRes] = await Promise.all([
+      const [cRes, coRes, rRes, repRes] = await Promise.all([
         fetch(`/api/campaigns/${campaignId}`, { cache: "no-store" }),
         fetch(`/api/campaigns/${campaignId}/contacts`, { cache: "no-store" }),
         fetch(`/api/campaigns/${campaignId}/runs?limit=50`, { cache: "no-store" }),
+        fetch(`/api/campaigns/${campaignId}/report`, { cache: "no-store" }),
       ]);
-      const cPayload = await cRes.json() as CampaignRecord | { error?: string };
-      const coPayload = await coRes.json() as CampaignContactsResponse | { error?: string };
-      const rPayload = await rRes.json() as CampaignRunsResponse | { error?: string };
+
+      const safeJson = async (res: Response) => {
+        try {
+          if (res.ok && res.headers.get("content-type")?.includes("application/json")) {
+            return await res.json();
+          }
+        } catch (e) {
+          console.error("Fetch error:", res.url, e);
+        }
+        return null;
+      };
+
+      const cPayload = await safeJson(cRes);
+      const coPayload = await safeJson(coRes);
+      const rPayload = await safeJson(rRes);
+      const repPayload = await safeJson(repRes);
 
       if (!cRes.ok || !coRes.ok || !rRes.ok) {
-        setError(("error" in cPayload && cPayload.error) || ("error" in coPayload && coPayload.error) || "Unable to load campaign.");
+        setError(
+          (cPayload && "error" in cPayload ? cPayload.error : null) || 
+          (coPayload && "error" in coPayload ? coPayload.error : null) || 
+          "Unable to load campaign data."
+        );
+        setLoading(false);
         return;
       }
-      const cData = cPayload as CampaignRecord;
-      const coData = coPayload as CampaignContactsResponse;
-      const rData = rPayload as CampaignRunsResponse;
-      setCampaign(cData);
-      setContacts(coData.contacts ?? []);
-      setRuns(rData.runs ?? []);
-      setEditName(cData.name);
-      setEditStatus(cData.status);
-      setEditMaxDaily(cData.maxDailySubmissions);
 
-      setEditSearchForForm(cData.searchForForm || false);
-      setEditBreakFlag(cData.breakFlag || false);
-      setStepsLocal(Array.isArray(cData.steps) ? cData.steps : []);
+      const campaignData = cPayload ? ("campaign" in cPayload ? cPayload.campaign : cPayload as CampaignRecord) : null;
+      
+      if (campaignData) {
+        setCampaign(campaignData);
+        if (campaignData.name) setEditName(campaignData.name);
+        if (campaignData.status) setEditStatus(campaignData.status);
+        if (campaignData.maxDailySubmissions !== undefined) setEditMaxDaily(campaignData.maxDailySubmissions);
+        
+        setEditSearchForForm(campaignData.searchForForm || false);
+        setEditBreakFlag(campaignData.breakFlag || false);
+        setStepsLocal(Array.isArray(campaignData.steps) ? campaignData.steps : []);
 
-      // Always restore latest run snapshot so stats persist across page loads
-      if (cData.lastRun) {
-        // If run is active, restore the snapshot immediately for polling
-        setRunSnapshot((prev: OutreachRunSnapshot | null) => {
-          // If we already have an active run with a DIFFERENT runId, do NOT overwrite it
-          // (the DB's lastRun may still reference an old run while a new one just started)
-          if (prev && isActiveRun(prev.status) && prev.runId !== cData.lastRun?.runId) return prev;
-          if (prev && prev.runId === cData.lastRun?.runId) return prev;
-          return {
-            runId: cData.lastRun!.runId,
-            status: cData.lastRun!.status,
-            progress: cData.lastRun!.totalLeads > 0 ? Math.round((cData.lastRun!.processedLeads / cData.lastRun!.totalLeads) * 100) : 0,
-            totalLeads: cData.lastRun!.totalLeads,
-            processedLeads: cData.lastRun!.processedLeads,
-            currentLead: "",
-            logs: [],
-            results: prev?.results ?? [],
-            duplicatesSkipped: cData.lastRun!.duplicatesSkipped,
-            startedAt: cData.lastRun!.startedAt,
-          } as OutreachRunSnapshot;
-        });
-        // Fetch full status (with results) to populate stats — but only for this specific lastRun
-        const lastRunId = cData.lastRun.runId;
-        fetch(`/api/outreach/run?runId=${encodeURIComponent(lastRunId)}`, { cache: "no-store" })
-          .then(r => r.ok ? r.json() : null)
-          .then((snap: OutreachRunSnapshot | null) => {
-            if (snap && "runId" in snap) {
-              // Only apply if the current snapshot still matches this lastRun
-              // (prevents stale fetch from overwriting a newly started run)
-              setRunSnapshot(prev => {
-                if (prev && isActiveRun(prev.status) && prev.runId !== snap.runId) return prev;
-                return mergeSnapshot(prev, snap);
-              });
-            }
-          })
-          .catch(() => { /* ignore */ });
+        // Always restore latest run snapshot so stats persist across page loads
+        if (campaignData.lastRun) {
+          setRunSnapshot((prev: OutreachRunSnapshot | null) => {
+            if (prev && prev.runId === campaignData.lastRun?.runId && prev.results?.length > 0) return prev;
+            return {
+              runId: campaignData.lastRun!.runId,
+              status: campaignData.lastRun!.status,
+              progress: campaignData.lastRun!.totalLeads > 0 ? Math.round((campaignData.lastRun!.processedLeads / campaignData.lastRun!.totalLeads) * 100) : 0,
+              totalLeads: campaignData.lastRun!.totalLeads,
+              processedLeads: campaignData.lastRun!.processedLeads,
+              currentLead: "",
+              logs: [],
+              results: (prev?.runId === campaignData.lastRun?.runId) ? (prev?.results ?? []) : [],
+              duplicatesSkipped: campaignData.lastRun!.duplicatesSkipped,
+              startedAt: campaignData.lastRun!.startedAt,
+            } as OutreachRunSnapshot;
+          });
+          
+          setResultsLoading(true);
+          fetch(`/api/outreach/run?runId=${encodeURIComponent(campaignData.lastRun.runId)}`, { cache: "no-store" })
+            .then(r => r.ok ? r.json() : null)
+            .then((snap: OutreachRunSnapshot | null) => {
+              if (snap && "runId" in snap) setRunSnapshot(snap);
+            })
+            .catch(() => { /* ignore */ })
+            .finally(() => setResultsLoading(false));
+        }
+      }
+      
+      setContacts(coPayload?.contacts || []);
+      setRuns(rPayload?.runs || []);
+
+      if (repPayload?.report) {
+        setReport(repPayload.report);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unable to load campaign.");
@@ -339,12 +349,26 @@ export default function CampaignDetailPage() {
       if (res.ok) {
         const payload = await res.json() as OutreachRunSnapshot;
         if (payload && "runId" in payload) {
-          setRunSnapshot(prev => mergeSnapshot(prev, payload));
+          setRunSnapshot(payload);
           setActiveTab("results");
         }
       }
     } catch { /* ignore */ }
   }, []);
+
+  /* Manually reload results for the current snapshot runId */
+  const reloadRunResults = useCallback(async () => {
+    if (!runSnapshot?.runId) return;
+    setResultsLoading(true);
+    try {
+      const res = await fetch(`/api/outreach/run?runId=${encodeURIComponent(runSnapshot.runId)}`, { cache: "no-store" });
+      if (res.ok) {
+        const payload = await res.json() as OutreachRunSnapshot;
+        if (payload && "runId" in payload) setRunSnapshot(payload);
+      }
+    } catch { /* ignore */ }
+    finally { setResultsLoading(false); }
+  }, [runSnapshot?.runId]);
 
   /* ─── Fetch logs ───────────────────────────────────────────── */
   const fetchLogs = useCallback(async () => {
@@ -373,43 +397,42 @@ export default function CampaignDetailPage() {
   useEffect(() => { void loadCampaignBundle(); }, [loadCampaignBundle]);
 
   /* ─── Restore run snapshot ────────────────────────────────── */
+  // Only restore from localStorage when the current snapshot is absent OR when the
+  // saved runId matches what the server told us is the latest run. This prevents a
+  // stale cached snapshot from overwriting a freshly-fetched one.
   useEffect(() => {
     if (!userId) return;
     try {
       const saved = localStorage.getItem(`run-snapshot-${userId}-${campaignId}`);
       if (saved) {
         const snap = JSON.parse(saved) as OutreachRunSnapshot;
-        if (snap?.runId) setRunSnapshot(prev => {
-          // Don't overwrite an active run with a cached snapshot from a different run
-          if (prev && isActiveRun(prev.status) && prev.runId !== snap.runId) return prev;
-          return mergeSnapshot(prev, snap);
-        });
+        if (snap?.runId) {
+          setRunSnapshot(prev => {
+            // Don't overwrite a fresh snapshot that already has results
+            if (prev && prev.results && prev.results.length > 0 && prev.runId !== snap.runId) return prev;
+            // Don't overwrite if we already have the same-or-newer run loaded
+            if (prev && prev.runId === snap.runId) return prev;
+            return snap;
+          });
+        }
       }
     } catch { /* ignore */ }
   }, [campaignId, userId]);
 
   useEffect(() => {
     if (!runSnapshot || !userId) return;
-    // Only persist if the snapshot has results — avoid caching degraded snapshots
-    if (runSnapshot.results.length === 0 && runSnapshot.processedLeads > 0) return;
     try { localStorage.setItem(`run-snapshot-${userId}-${campaignId}`, JSON.stringify(runSnapshot)); }
     catch { /* ignore */ }
   }, [runSnapshot, campaignId, userId]);
 
   /* ─── Poll active run ─────────────────────────────────────── */
   const poll404CountRef = React.useRef(0);
-  const runSnapshotRef = React.useRef(runSnapshot);
-  runSnapshotRef.current = runSnapshot;
-
-  // Track run identity for polling lifecycle (avoids re-mounting on every result update)
-  const activeRunId = runSnapshot && isActiveRun(runSnapshot.status) ? runSnapshot.runId : null;
-
   useEffect(() => {
-    if (!activeRunId) return;
+    if (!runSnapshot || !isActiveRun(runSnapshot.status)) return;
     poll404CountRef.current = 0; // reset on re-mount
     const timer = globalThis.setInterval(async () => {
       try {
-        const res = await fetch(`/api/outreach/run?runId=${encodeURIComponent(activeRunId)}`, { cache: "no-store" });
+        const res = await fetch(`/api/outreach/run?runId=${encodeURIComponent(runSnapshot.runId)}`, { cache: "no-store" });
         if (res.status === 404) {
           // Tolerate transient 404s — only complete after 3 consecutive misses
           poll404CountRef.current += 1;
@@ -422,12 +445,12 @@ export default function CampaignDetailPage() {
         poll404CountRef.current = 0; // reset on success
         const payload = await res.json() as OutreachRunSnapshot | { error?: string };
         if (!res.ok || !("runId" in payload)) return;
-        setRunSnapshot(prev => mergeSnapshot(prev, payload as OutreachRunSnapshot));
-        if (!isActiveRun((payload as OutreachRunSnapshot).status)) void loadCampaignBundle();
+        setRunSnapshot(payload);
+        if (!isActiveRun(payload.status)) void loadCampaignBundle();
       } catch { /* keep stable */ }
     }, RUN_POLL_INTERVAL_MS);
     return () => globalThis.clearInterval(timer);
-  }, [loadCampaignBundle, activeRunId]);
+  }, [loadCampaignBundle, runSnapshot]);
 
   /* ─── Actions ─────────────────────────────────────────────── */
   const startRun = useCallback(async () => {
@@ -444,22 +467,22 @@ export default function CampaignDetailPage() {
         body: JSON.stringify({
           resume: true,
           persona: { id: campaign.id, title: campaign.name, aiInstruction: enabledSteps[0]?.aiInstruction || "", maxDailySubmissions: campaign.maxDailySubmissions, steps: stepsLocal },
-          leads: contacts.map(c => ({ companyName: c.companyName, contactUrl: c.contactUrl })),
+          leads: contacts.map(c => ({ companyName: c.companyName, websiteUrl: c.websiteUrl, contactUrl: c.contactUrl })),
         }),
       });
       const payload = await res.json() as OutreachRunSnapshot | { error?: string; runId?: string };
       if (!res.ok || !("runId" in payload && payload.runId) || !("status" in payload)) {
         // If 409, there's already a run in progress — recover by polling its status
         let recoveredRunId = payload.runId;
-        
+
         // Try to extract run_id from the error message if the backend didn't provide it
         if (!recoveredRunId && payload.error) {
-           const match = payload.error.match(/run_id=([a-f0-9]+)/i);
-           if (match && match[1]) {
-             recoveredRunId = match[1];
-           }
+          const match = payload.error.match(/run_id=([a-f0-9]+)/i);
+          if (match && match[1]) {
+            recoveredRunId = match[1];
+          }
         }
-        
+
         if (res.status === 409 && recoveredRunId) {
           try {
             const existingRes = await fetch(`/api/outreach/run?runId=${encodeURIComponent(recoveredRunId)}`, { cache: "no-store" });
@@ -559,8 +582,8 @@ export default function CampaignDetailPage() {
         body: JSON.stringify({ replyStatus: newStatus }),
       });
       const payload = await res.json() as ContactRecord | { error?: string };
-      if (!res.ok || !("id" in payload)) { 
-        setMessage(("error" in payload && payload.error) || "Update failed."); 
+      if (!res.ok || !("id" in payload)) {
+        setMessage(("error" in payload && payload.error) || "Update failed.");
         // Revert on error
         setContacts(prev => prev.map(c => c.id === contact.id ? { ...c, replyStatus: contact.replyStatus } : c));
       }
@@ -586,7 +609,7 @@ export default function CampaignDetailPage() {
       } else {
         listContacts = list.contacts;
       }
-      
+
       if (!listContacts || listContacts.length === 0) {
         throw new Error("List is empty or contacts not found.");
       }
@@ -595,6 +618,7 @@ export default function CampaignDetailPage() {
         contacts: listContacts.map(item => ({
           companyName: item.companyName || "Unknown",
           company_name: item.companyName || "Unknown",
+          websiteUrl: item.websiteUrl || "",
           contactUrl: item.contactUrl,
           contact_url: item.contactUrl
         })),
@@ -634,15 +658,15 @@ export default function CampaignDetailPage() {
       }
 
       if (!res.ok) throw new Error("Import failed. Please try again.");
-      
+
       setMessage(`Successfully imported ${listContacts.length} contacts from "${list.name}".`);
       setShowImportModal(false);
       setPendingImportList(null);
       await loadCampaignBundle();
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Import failed.");
-    } finally { 
-      setImportingListId(null); 
+    } finally {
+      setImportingListId(null);
     }
   }, [campaignId, loadCampaignBundle, campaign]);
 
@@ -699,15 +723,19 @@ export default function CampaignDetailPage() {
   }, [campaign, stepsLocal]);
 
   const exportResultsToCsv = useCallback(() => {
-    if (!runSnapshot?.results?.length) { alert("No results to export."); return; }
-    const headers = ["Company", "Contact URL", "Status", "Captcha Status", "Submitted", "Form Found", "Confirmation"];
+    const headers = ["Step", "Company", "Website URL", "Contact URL", "Status", "Strategy", "Method", "Tokens (I/O)", "BW (KB)", "Submitted", "Form Data", "Confirmation"];
     const rows = runSnapshot.results.map(r => [
+      `"Step ${(r.step_index || 0) + 1}"`,
       `"${(r.companyName || "").replace(/"/g, '""')}"`,
+      `"${(r.websiteUrl || "").replace(/"/g, '""')}"`,
       `"${(r.contactUrl || "").replace(/"/g, '""')}"`,
       `"${r.status || ""}"`,
-      `"${(r.captchaStatus || "").replace(/"/g, '""')}"`,
+      `"${(r as any).strategy || "N/A"}"`,
+      `"${(r as any).discoverMethod || "direct"}"`,
+      `"${(r as any).inputTokens || 0} / ${(r as any).outputTokens || 0}"`,
+      `"${(r as any).bandwidthKb || 0}"`,
       `"${r.submitted || ""}"`,
-      `"${(r.captchaStatus || "").toLowerCase().includes("found") ? "Yes" : "No"}"`,
+      `"${(r.fieldsFilled || "").replace(/"/g, '""')}"`,
       `"${(r.confirmationMsg || "").replace(/"/g, '""')}"`,
     ]);
     const csv = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
@@ -743,8 +771,8 @@ export default function CampaignDetailPage() {
                     </div>
                     <div>
                       <h3 className="font-bold text-gray-900 text-base leading-tight">{contact.companyName}</h3>
-                      <a href={contact.contactUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-0.5">
-                        {contact.contactUrl.length > 50 ? contact.contactUrl.slice(0, 50) + "…" : contact.contactUrl}
+                      <a href={contact.websiteUrl || contact.contactUrl} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1 mt-0.5">
+                        {(contact.websiteUrl || contact.contactUrl).length > 50 ? (contact.websiteUrl || contact.contactUrl).slice(0, 50) + "…" : (contact.websiteUrl || contact.contactUrl)}
                         <ExternalLink size={10} />
                       </a>
                     </div>
@@ -773,6 +801,18 @@ export default function CampaignDetailPage() {
                   </div>
                 </div>
 
+                {/* Strategy + Method row */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-gray-50 rounded-xl p-3">
+                    <p className="text-xs text-gray-400 uppercase tracking-wide font-medium mb-1">Discovery Method</p>
+                    <p className="text-sm font-mono text-gray-700">{(result as any)?.discoverMethod || "direct"}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-3">
+                    <p className="text-xs text-gray-400 uppercase tracking-wide font-medium mb-1">Detection Strategy</p>
+                    <p className="text-sm font-mono text-gray-700">{(result as any)?.strategy || "N/A"}</p>
+                  </div>
+                </div>
+
                 {/* Captcha row */}
                 <div className="grid grid-cols-3 gap-3">
                   <div className="bg-gray-50 rounded-xl p-3 text-center">
@@ -789,21 +829,50 @@ export default function CampaignDetailPage() {
                   </div>
                 </div>
 
+                {/* Form URL */}
+                {result?.detectedFormUrl && (
+                  <div className="bg-emerald-50 border border-emerald-100 rounded-xl p-4">
+                    <p className="text-xs text-emerald-500 uppercase tracking-wide font-medium mb-1.5">Detected Contact Form URL</p>
+                    <a href={result.detectedFormUrl} target="_blank" rel="noreferrer" className="text-sm text-emerald-900 font-mono hover:underline flex items-center gap-1.5">
+                      <ExternalLink size={13} /> {result.detectedFormUrl}
+                    </a>
+                  </div>
+                )}
+
                 {/* Confirmation message */}
                 {result?.confirmationMsg && (
                   <div className="bg-blue-50 border border-blue-100 rounded-xl p-4">
-                    <p className="text-xs text-blue-500 uppercase tracking-wide font-medium mb-1.5">Confirmation / Details</p>
+                    <p className="text-xs text-blue-500 uppercase tracking-wide font-medium mb-1.5">Confirmation Message</p>
                     <p className="text-sm text-blue-900 leading-relaxed break-words whitespace-pre-wrap">{result.confirmationMsg}</p>
                   </div>
                 )}
 
-                {/* Fields Filled Data */}
-                {result?.fieldsFilled && result.fieldsFilled !== "-" && result.fieldsFilled !== "- none" && (
-                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4 mt-3">
-                    <p className="text-xs text-indigo-500 uppercase tracking-wide font-medium mb-1.5">Form Data Submited</p>
-                    <p className="text-sm text-indigo-900 leading-relaxed break-words font-mono whitespace-pre-wrap">{result.fieldsFilled}</p>
+                {/* Fields Filled Data - Structured Grid */}
+                {result?.fieldsFilledData && Object.keys(result.fieldsFilledData).length > 0 ? (
+                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
+                    <p className="text-xs text-indigo-500 uppercase tracking-wide font-medium mb-2">Detailed Form Data</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2">
+                      {Object.entries(result.fieldsFilledData).map(([key, value], idx) => (
+                        <div key={idx} className="flex flex-col border-b border-indigo-100/50 pb-1.5 last:border-0">
+                          <span className="text-[10px] text-indigo-400 font-bold uppercase tracking-tight truncate" title={key}>{key}</span>
+                          <span className="text-sm text-indigo-900 font-medium break-words">{String(value)}</span>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                )}
+                ) : result?.fieldsFilled && result.fieldsFilled !== "-" && result.fieldsFilled !== "- none" ? (
+                  <div className="bg-indigo-50 border border-indigo-100 rounded-xl p-4">
+                    <p className="text-xs text-indigo-500 uppercase tracking-wide font-medium mb-2">Detected Form Fields</p>
+                    <div className="grid grid-cols-1 gap-1.5">
+                      {result.fieldsFilled.split(/,?\s*- /).filter(f => f.trim()).map((field, idx) => (
+                        <div key={idx} className="flex items-center gap-2 text-sm text-indigo-900">
+                          <div className="w-1.5 h-1.5 rounded-full bg-indigo-400 shrink-0" />
+                          <span className="font-medium">{field.trim()}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
 
                 {/* Captcha status raw */}
                 {result?.captchaStatus && result.captchaStatus !== "none" && (
@@ -813,11 +882,27 @@ export default function CampaignDetailPage() {
                   </div>
                 )}
 
+                {/* Usage Detail */}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-gray-50 rounded-xl p-2.5">
+                    <p className="text-[10px] text-gray-400 uppercase font-bold mb-1">Input</p>
+                    <p className="text-xs font-mono text-gray-600">{(result as any)?.inputTokens || 0} tkn</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-2.5">
+                    <p className="text-[10px] text-gray-400 uppercase font-bold mb-1">Output</p>
+                    <p className="text-xs font-mono text-gray-600">{(result as any)?.outputTokens || 0} tkn</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-xl p-2.5">
+                    <p className="text-[10px] text-gray-400 uppercase font-bold mb-1">Bandwidth</p>
+                    <p className="text-xs font-mono text-gray-600">{(result as any)?.bandwidthKb || 0} KB</p>
+                  </div>
+                </div>
+
                 {/* Cost */}
                 {result?.estCostUsd != null && result.estCostUsd > 0 && (
-                  <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 rounded-xl">
-                    <span className="text-sm text-gray-500">Estimated AI Cost</span>
-                    <span className="text-sm font-semibold text-gray-800">${result.estCostUsd.toFixed(5)}</span>
+                  <div className="flex items-center justify-between px-4 py-2 bg-gray-50 rounded-xl">
+                    <span className="text-xs text-gray-500">Estimated AI Cost</span>
+                    <span className="text-xs font-semibold text-gray-800">${result.estCostUsd.toFixed(5)}</span>
                   </div>
                 )}
 
@@ -976,7 +1061,7 @@ export default function CampaignDetailPage() {
           </div>
           <div>
             <p className="meta-label">Remaining</p>
-            <p className="text-lg font-bold text-gray-600">{stats.pending + stats.warning}</p>
+            <p className="text-lg font-bold text-gray-600">{stats.pending}</p>
           </div>
           <div>
             <p className="meta-label">Daily Limit</p>
@@ -1031,18 +1116,16 @@ export default function CampaignDetailPage() {
                   ? `Run progress · ${runSnapshot.processedLeads}/${runSnapshot.totalLeads}`
                   : `Last run ${runSnapshot.status} · ${runSnapshot.processedLeads}/${runSnapshot.totalLeads} processed`}
               </p>
-              <p className={`text-xs font-medium ${
-                runSnapshot.status === "completed" ? "text-green-600" :
-                runSnapshot.status === "failed" ? "text-red-500" :
-                "text-blue-600"
-              }`}>{runSnapshot.progress}%</p>
+              <p className={`text-xs font-medium ${runSnapshot.status === "completed" ? "text-green-600" :
+                  runSnapshot.status === "failed" ? "text-red-500" :
+                    "text-blue-600"
+                }`}>{runSnapshot.progress}%</p>
             </div>
             <div className="w-full bg-gray-100 rounded-full h-2.5 overflow-hidden">
-              <div className={`h-2.5 rounded-full transition-all duration-300 ${
-                runSnapshot.status === "completed" ? "bg-green-500" :
-                runSnapshot.status === "failed" ? "bg-red-400" :
-                "bg-gradient-to-r from-blue-500 to-blue-600"
-              }`} style={{ width: `${runSnapshot.progress}%` }} />
+              <div className={`h-2.5 rounded-full transition-all duration-300 ${runSnapshot.status === "completed" ? "bg-green-500" :
+                  runSnapshot.status === "failed" ? "bg-red-400" :
+                    "bg-gradient-to-r from-blue-500 to-blue-600"
+                }`} style={{ width: `${runSnapshot.progress}%` }} />
             </div>
             {/* Skipped info */}
             {(runSnapshot.duplicatesSkipped > 0 || (runSnapshot as any).resumeSkippedLeads > 0 || (runSnapshot as any).socialSkippedLeads > 0) && (
@@ -1080,11 +1163,10 @@ export default function CampaignDetailPage() {
               key={tab}
               type="button"
               onClick={() => setActiveTab(tab)}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-t-lg text-sm font-medium transition-colors ${
-                activeTab === tab
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-t-lg text-sm font-medium transition-colors ${activeTab === tab
                   ? "bg-white border border-b-0 border-gray-200 text-blue-600"
                   : "text-gray-500 hover:text-gray-800 hover:bg-gray-100"
-              }`}
+                }`}
             >
               {icons[tab]} {labels[tab]}
             </button>
@@ -1152,7 +1234,7 @@ export default function CampaignDetailPage() {
                   <tr>
                     <th>Company</th>
                     <th>Domain</th>
-                    <th>Contact URL</th>
+                    <th>Website / Contact URL</th>
                     <th>Reply?</th>
                     <th>Added</th>
                     <th></th>
@@ -1164,8 +1246,8 @@ export default function CampaignDetailPage() {
                       <td className="font-medium">{contact.companyName}</td>
                       <td className="text-gray-500">{contact.domain || "—"}</td>
                       <td>
-                        <a href={contact.contactUrl} target="_blank" rel="noreferrer" className="table-link flex items-center gap-1">
-                          <span className="truncate max-w-[200px] inline-block">{contact.contactUrl}</span>
+                        <a href={contact.websiteUrl || contact.contactUrl} target="_blank" rel="noreferrer" className="table-link flex items-center gap-1">
+                          <span className="truncate max-w-[200px] inline-block">{contact.websiteUrl || contact.contactUrl}</span>
                           <ExternalLink size={12} />
                         </a>
                       </td>
@@ -1202,17 +1284,44 @@ export default function CampaignDetailPage() {
           )}
         </section>
       )}
-
       {/* ─── ACTIVITY TAB ─────────────────────────────────────── */}
       {activeTab === "activity" && (
         <section className="panel" style={{ borderTopLeftRadius: 0 }}>
+          {/* Report Stats Summary */}
+          {report && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+              <div className="bg-white border border-gray-100 rounded-xl p-3 shadow-sm">
+                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">Forms Found</p>
+                <p className="text-xl font-bold text-gray-900">{report.contact_form_present || 0}</p>
+                <p className="text-[10px] text-gray-500 mt-0.5">Contact forms identified</p>
+              </div>
+              <div className="bg-white border border-gray-100 rounded-xl p-3 shadow-sm border-l-4 border-l-green-500">
+                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">Success (No Captcha)</p>
+                <div className="flex items-baseline gap-1.5">
+                  <p className="text-xl font-bold text-green-600">{report.wc_successful || 0}</p>
+                  <p className="text-[10px] text-gray-400">sites</p>
+                </div>
+              </div>
+              <div className="bg-white border border-gray-100 rounded-xl p-3 shadow-sm border-l-4 border-l-blue-500">
+                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">Success (Captcha)</p>
+                <div className="flex items-baseline gap-1.5">
+                  <p className="text-xl font-bold text-blue-600">{report.cap_successful || 0}</p>
+                  <p className="text-[10px] text-gray-400">bypassed</p>
+                </div>
+              </div>
+              <div className="bg-white border border-gray-100 rounded-xl p-3 shadow-sm border-l-4 border-l-red-500">
+                <p className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-1">Total Errors</p>
+                <p className="text-xl font-bold text-red-600">{report.total_errors || 0}</p>
+                <p className="text-[10px] text-gray-500 mt-0.5">Failed submissions</p>
+              </div>
+            </div>
+          )}
 
 
-          {/* Stats row */}
           <div className="flex items-center gap-4 flex-wrap mb-4">
-            {(["all", "success", "fail", "warning", "pending"] as FilterMode[]).map((mode) => {
+            {(["all", "success", "fail", "pending"] as FilterMode[]).map((mode) => {
               const count = mode === "all" ? stats.total : stats[mode as keyof typeof stats] as number;
-              const colors: Record<string, string> = { all: "bg-gray-100 text-gray-700", success: "bg-green-100 text-green-700", fail: "bg-red-100 text-red-700", warning: "bg-amber-100 text-amber-700", pending: "bg-gray-100 text-gray-500" };
+              const colors: Record<string, string> = { all: "bg-gray-100 text-gray-700", success: "bg-green-100 text-green-700", fail: "bg-red-100 text-red-700", pending: "bg-gray-100 text-gray-500" };
               return (
                 <button
                   key={mode}
@@ -1225,6 +1334,16 @@ export default function CampaignDetailPage() {
               );
             })}
             <div className="ml-auto flex items-center gap-2">
+              {runSnapshot && resultsLoading && (
+                <span className="text-xs text-gray-400 flex items-center gap-1.5">
+                  <RefreshCw size={12} className="animate-spin" /> Loading results...
+                </span>
+              )}
+              {runSnapshot && !resultsLoading && runSnapshot.results.length === 0 && !isActiveRun(runSnapshot.status) && (
+                <button type="button" onClick={() => void reloadRunResults()} className="button-secondary flex items-center gap-1.5 text-xs">
+                  <RefreshCw size={13} /> Reload Results
+                </button>
+              )}
               {runSnapshot && (
                 <button type="button" onClick={exportResultsToCsv} className="button-secondary flex items-center gap-1.5 text-xs">
                   <DownloadIcon size={13} /> Export CSV
@@ -1235,7 +1354,8 @@ export default function CampaignDetailPage() {
                   type="button"
                   className="button-secondary text-xs"
                   onClick={() => {
-                    try { localStorage.removeItem(`run-snapshot-${campaignId}`); } catch { /* ignore */ }
+                    // Must use the same key pattern used when saving: run-snapshot-{userId}-{campaignId}
+                    try { localStorage.removeItem(`run-snapshot-${userId}-${campaignId}`); } catch { /* ignore */ }
                     setRunSnapshot(null);
                   }}
                 >
@@ -1264,6 +1384,26 @@ export default function CampaignDetailPage() {
             </div>
           )}
 
+          {runSnapshot && resultsLoading && runSnapshot.results.length === 0 && (
+            <div className="flex items-center justify-center gap-2 py-8 text-gray-400 text-sm">
+              <RefreshCw size={16} className="animate-spin" />
+              <span>Loading contact-level results from backend...</span>
+            </div>
+          )}
+
+          {runSnapshot && !resultsLoading && runSnapshot.results.length === 0 && !isActiveRun(runSnapshot.status) && (
+            <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-4">
+              <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm text-amber-800 font-medium">Contact-level results not available</p>
+                <p className="text-xs text-amber-700 mt-0.5">The run completed but results may not be in the backend cache. Click <strong>Reload Results</strong> to try fetching from the server.</p>
+              </div>
+              <button type="button" onClick={() => void reloadRunResults()} disabled={resultsLoading} className="px-3 py-1.5 bg-amber-600 text-white text-xs rounded-lg hover:bg-amber-700 disabled:opacity-50 flex items-center gap-1.5">
+                <RefreshCw size={12} /> Reload
+              </button>
+            </div>
+          )}
+
           {runSnapshot && (
             <div className="table-wrap">
               <table className="clean-table">
@@ -1271,35 +1411,55 @@ export default function CampaignDetailPage() {
                   <tr>
                     <th></th>
                     <th>Company</th>
-                    <th>Contact URL</th>
+                    <th>Website</th>
+                    <th>Form URL</th>
                     <th>Status</th>
                   </tr>
                 </thead>
                 <tbody>
                   {activityRows.length === 0 ? (
-                    <tr><td colSpan={4} className="table-empty">No results match current filter.</td></tr>
+                    <tr><td colSpan={5} className="table-empty">No results match current filter.</td></tr>
                   ) : (
                     activityRows.map((contact) => {
                       const result = getContactResult(contact);
+                      const activeStatus = runSnapshot?.activeLeads?.[contact.contactUrl];
+                      const isProcessing = !!activeStatus;
+                      const detectedFormUrl = (result as any)?.detectedFormUrl;
+
                       return (
-                        <tr key={contact.id} className={result?.status === "success" ? "bg-green-50/30" : result?.status === "fail" ? "bg-red-50/30" : ""}>
-                          <td><StatusIcon status={result?.status ?? null} /></td>
+                        <tr key={contact.id} className={`${result?.status === "success" ? "bg-green-50/30" : (result?.status === "fail" || result?.status === "warning") ? "bg-red-50/30" : ""} ${isProcessing ? "animate-pulse-subtle bg-blue-50/20" : ""}`}>
+                          <td><StatusIcon status={isProcessing ? null : (result?.status ?? null)} /></td>
                           <td className="font-medium text-gray-800">
                             {contact.companyName}
+                            {isProcessing && (
+                                <div className="text-[10px] text-blue-600 font-semibold mt-0.5 flex items-center gap-1 uppercase tracking-wider">
+                                    <RefreshCw size={8} className="animate-spin" />
+                                    {activeStatus}
+                                </div>
+                            )}
                           </td>
                           <td>
-                            <a href={contact.contactUrl} target="_blank" rel="noreferrer" className="table-link flex items-center gap-1">
-                              <span className="truncate max-w-[160px] inline-block">{contact.contactUrl}</span>
+                            <a href={contact.websiteUrl || contact.contactUrl} target="_blank" rel="noreferrer" className="table-link flex items-center gap-1">
+                              <span className="truncate max-w-[140px] inline-block">{contact.websiteUrl || contact.contactUrl}</span>
                               <ExternalLink size={11} />
                             </a>
                           </td>
                           <td>
-                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                              result?.status === "success" ? "bg-green-100 text-green-700" :
-                              result?.status === "fail" ? "bg-red-100 text-red-700" :
-                              result?.status === "warning" ? "bg-amber-100 text-amber-700" :
-                              "bg-gray-100 text-gray-500"
-                            }`}>
+                            {detectedFormUrl ? (
+                              <a href={detectedFormUrl} target="_blank" rel="noreferrer" className="text-xs text-emerald-600 hover:underline flex items-center gap-1 font-mono">
+                                <span className="truncate max-w-[140px] inline-block">{detectedFormUrl}</span>
+                                <ExternalLink size={10} />
+                              </a>
+                            ) : (
+                              <span className="text-gray-400 text-[10px]">Pending</span>
+                            )}
+                          </td>
+                          <td>
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${result?.status === "success" ? "bg-green-100 text-green-700" :
+                                result?.status === "fail" ? "bg-red-100 text-red-700" :
+                                  result?.status === "warning" ? "bg-amber-100 text-amber-700" :
+                                    "bg-gray-100 text-gray-500"
+                              }`}>
                               {result?.status === "success" ? "Site successfully submit" : result?.status === "fail" ? "Fail" : result?.status ?? "Pending"}
                             </span>
                           </td>
@@ -1323,8 +1483,8 @@ export default function CampaignDetailPage() {
                   </thead>
                   <tbody>
                     {runs.map((run) => (
-                      <tr 
-                        key={run.runId} 
+                      <tr
+                        key={run.runId}
                         onClick={() => viewPastRun(run.runId)}
                         className="cursor-pointer hover:bg-gray-50 transition-colors"
                         title="Click to view run details"
@@ -1404,14 +1564,14 @@ export default function CampaignDetailPage() {
                     const lower = line.toLowerCase();
                     const color =
                       lower.includes("[result]") && lower.includes('"submitted": "yes"') ? "#4ade80" :
-                      lower.includes("[result]") ? "#f87171" :
-                      lower.includes("[limit]") ? "#fbbf24" :
-                      lower.includes("[fatal]") || lower.includes("error") ? "#f87171" :
-                      lower.includes("[worker") ? "#93c5fd" :
-                      lower.includes("✓") || lower.includes("success") ? "#4ade80" :
-                      lower.includes("[captcha") ? "#c084fc" :
-                      lower.includes("[form") ? "#67e8f9" :
-                      "#94a3b8";
+                        lower.includes("[result]") ? "#f87171" :
+                          lower.includes("[limit]") ? "#fbbf24" :
+                            lower.includes("[fatal]") || lower.includes("error") ? "#f87171" :
+                              lower.includes("[worker") ? "#93c5fd" :
+                                lower.includes("✓") || lower.includes("success") ? "#4ade80" :
+                                  lower.includes("[captcha") ? "#c084fc" :
+                                    lower.includes("[form") ? "#67e8f9" :
+                                      "#94a3b8";
                     return (
                       <div key={i} style={{ color, wordBreak: "break-all", marginBottom: "2px" }}>
                         {line}
@@ -1424,11 +1584,53 @@ export default function CampaignDetailPage() {
             )}
           </div>
 
+          {/* Report Stats Summary */}
+          {report && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+              <div className="bg-white border border-blue-100 rounded-xl p-3 shadow-sm bg-blue-50/30">
+                <p className="text-[10px] text-blue-500 font-bold uppercase tracking-wider mb-1">Forms Found</p>
+                <p className="text-xl font-bold text-blue-900">{report.contact_form_present || 0}</p>
+              </div>
+              <div className="bg-white border border-green-100 rounded-xl p-3 shadow-sm bg-green-50/30">
+                <p className="text-[10px] text-green-600 font-bold uppercase tracking-wider mb-1">Smooth Success</p>
+                <p className="text-xl font-bold text-green-700">{report.wc_successful || 0}</p>
+              </div>
+              <div className="bg-white border border-indigo-100 rounded-xl p-3 shadow-sm bg-indigo-50/30">
+                <p className="text-[10px] text-indigo-600 font-bold uppercase tracking-wider mb-1">Captcha Bypassed</p>
+                <p className="text-xl font-bold text-indigo-700">{report.cap_successful || 0}</p>
+              </div>
+              <div className="bg-white border border-red-100 rounded-xl p-3 shadow-sm bg-red-50/30">
+                <p className="text-[10px] text-red-600 font-bold uppercase tracking-wider mb-1">Total Errors</p>
+                <p className="text-xl font-bold text-red-700">{report.total_errors || 0}</p>
+              </div>
+            </div>
+          )}
+
           {!runSnapshot && (
             <div className="empty-state">
               <Database size={48} strokeWidth={1} />
               <h3>No detailed results</h3>
               <p>Start a campaign run to see comprehensive logs and failure reasons.</p>
+            </div>
+          )}
+
+          {runSnapshot && resultsLoading && runSnapshot.results.length === 0 && (
+            <div className="flex items-center justify-center gap-2 py-8 text-gray-400 text-sm">
+              <RefreshCw size={16} className="animate-spin" />
+              <span>Loading contact-level results from backend...</span>
+            </div>
+          )}
+
+          {runSnapshot && !resultsLoading && runSnapshot.results.length === 0 && !isActiveRun(runSnapshot.status) && (
+            <div className="flex items-center gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-4">
+              <AlertTriangle size={16} className="text-amber-600 shrink-0" />
+              <div className="flex-1">
+                <p className="text-sm text-amber-800 font-medium">Contact-level results not available</p>
+                <p className="text-xs text-amber-700 mt-0.5">The backend may no longer have this run's details in memory. Try reloading to fetch from the server.</p>
+              </div>
+              <button type="button" onClick={() => void reloadRunResults()} disabled={resultsLoading} className="px-3 py-1.5 bg-amber-600 text-white text-xs rounded-lg hover:bg-amber-700 disabled:opacity-50 flex items-center gap-1.5">
+                <RefreshCw size={12} /> Reload Results
+              </button>
             </div>
           )}
 
@@ -1438,62 +1640,93 @@ export default function CampaignDetailPage() {
                 <thead>
                   <tr>
                     <th></th>
+                    <th>Step</th>
                     <th>Company</th>
-                    <th>Contact URL</th>
+                    <th>Website</th>
+                    <th>Form Found At</th>
+                    <th>Strategy</th>
+                    <th>Tokens</th>
                     <th>Status</th>
-                    <th>Captcha Found</th>
-                    <th>Captcha Solved</th>
-                    <th>Site Key Not Found</th>
-                    <th>Form Found</th>
                     <th>Details</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {activityRows.length === 0 ? (
-                    <tr><td colSpan={9} className="table-empty">No results match current filter.</td></tr>
+                  {steppedResults.length === 0 ? (
+                    <tr><td colSpan={8} className="table-empty">No results match current filter.</td></tr>
                   ) : (
-                    activityRows.map((contact) => {
-                      const result = getContactResult(contact);
-                      const captcha = parseCaptchaStatus(result?.captchaStatus || "");
-                      const formFound = result ? (result.formFound ?? false) : false;
-                      const captchaFound = result ? (result.captchaPresent ?? captcha.found) : false;
+                    steppedResults.map((result, idx) => {
+                      const contact: ContactRecord = {
+                        id: result.contactUrl, // partial mock for detail view
+                        companyName: result.companyName || "Unknown",
+                        websiteUrl: result.websiteUrl || "",
+                        contactUrl: result.contactUrl,
+                        createdAt: "", // unknown here
+                        updatedAt: "",
+                        campaignId: campaignId,
+                      } as any;
+                      
+                      const captcha = parseCaptchaStatus(result.captchaStatus || "");
+                      const fieldsFilled = result.fieldsFilled && result.fieldsFilled !== "-" ? result.fieldsFilled : "";
+
                       return (
-                        <tr key={contact.id} className={result?.status === "success" ? "bg-green-50/30" : result?.status === "fail" ? "bg-red-50/30" : ""}>
-                          <td><StatusIcon status={result?.status ?? null} /></td>
+                        <tr key={`${result.contactUrl}-${result.step_index}-${idx}`} className={result.status === "success" ? "bg-green-50/30" : result.status === "fail" ? "bg-red-50/30" : ""}>
+                          <td><StatusIcon status={result.status ?? null} /></td>
+                          <td>
+                            <span className="text-xs font-bold px-2 py-0.5 bg-blue-100 text-blue-700 rounded-md">
+                              STEP {(result.step_index ?? 0) + 1}
+                            </span>
+                          </td>
                           <td
                             className="font-medium text-blue-700 cursor-pointer hover:underline hover:text-blue-900 transition-colors"
-                            onClick={() => setSelectedDetail({ contact, result: result ?? null })}
+                            onClick={() => setSelectedDetail({ contact, result: result as any })}
                             title="Click for full details"
                           >
-                            {contact.companyName}
+                            {result.companyName}
                           </td>
                           <td>
-                            <a href={contact.contactUrl} target="_blank" rel="noreferrer" className="table-link flex items-center gap-1">
-                              <span className="truncate max-w-[160px] inline-block">{contact.contactUrl}</span>
+                            <a href={result.websiteUrl || result.contactUrl} target="_blank" rel="noreferrer" className="table-link flex items-center gap-1">
+                              <span className="truncate max-w-[120px] inline-block font-medium">{result.websiteUrl || result.contactUrl}</span>
                               <ExternalLink size={11} />
                             </a>
                           </td>
                           <td>
-                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                              result?.status === "success" ? "bg-green-100 text-green-700" :
-                              result?.status === "fail" ? "bg-red-100 text-red-700" :
-                              result?.status === "warning" ? "bg-amber-100 text-amber-700" :
-                              "bg-gray-100 text-gray-500"
-                            }`}>
-                              {result?.status ?? "pending"}
+                            {result.detectedFormUrl ? (
+                              <a href={result.detectedFormUrl} target="_blank" rel="noreferrer" className="text-[10px] text-emerald-600 hover:underline flex items-center gap-1 font-mono">
+                                <span className="truncate max-w-[120px] inline-block">{result.detectedFormUrl}</span>
+                                <ExternalLink size={10} />
+                              </a>
+                            ) : (
+                              <span className="text-gray-400 text-[10px]">Pending</span>
+                            )}
+                          </td>
+                          <td className="text-center">
+                            {result.strategy && result.strategy !== "N/A" ? (
+                              <span className="text-[10px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded font-mono" title={result.strategy}>
+                                {result.strategy}
+                              </span>
+                            ) : (
+                                <span className="text-[10px] text-gray-400 font-mono italic">{(result as any).discoverMethod || "direct"}</span>
+                            )}
+                          </td>
+                          <td className="text-[10px] font-mono whitespace-nowrap text-gray-600">
+                             { (result as any).inputTokens || 0 } / { (result as any).outputTokens || 0 }
+                          </td>
+                          <td>
+                            <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${result.status === "success" ? "bg-green-100 text-green-700" :
+                                result.status === "fail" ? "bg-red-100 text-red-700" :
+                                  result.status === "warning" ? "bg-amber-100 text-amber-700" :
+                                    "bg-gray-100 text-gray-500"
+                              }`}>
+                              {result.status ?? "pending"}
                             </span>
                           </td>
-                          <td className="text-center">{result ? (captchaFound ? "✅" : "❌") : "—"}</td>
-                          <td className="text-center">{result ? (captcha.solved ? "✅" : "❌") : "—"}</td>
-                          <td className="text-center">{result ? (captcha.siteKeyNotFound ? "⚠️" : "—") : "—"}</td>
-                          <td className="text-center">{result ? (formFound ? "✅" : "❌") : "—"}</td>
-                          <td className="text-xs text-gray-400 max-w-[180px] truncate" title={result?.confirmationMsg}>
+                          <td className="text-xs text-blue-600">
                             <button
                               type="button"
-                              className="text-xs text-blue-600 hover:underline"
-                              onClick={() => setSelectedDetail({ contact, result: result ?? null })}
+                              className="font-medium hover:underline"
+                              onClick={() => setSelectedDetail({ contact, result: result as any })}
                             >
-                              {result ? "View Details" : "—"}
+                              View
                             </button>
                           </td>
                         </tr>
@@ -1564,7 +1797,6 @@ export default function CampaignDetailPage() {
                     {/* ── Expanded detail panel ── */}
                     {isExpanded && (
                       <div className="px-4 pb-4 pt-2 border-t border-gray-100 space-y-4">
-                        <div className="flex flex-wrap gap-4 items-start">
                           <label className="flex-1 min-w-[120px]">
                             <span className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">Type</span>
                             <select
@@ -1576,69 +1808,79 @@ export default function CampaignDetailPage() {
                               <option value="normal">Scheduled Send</option>
                             </select>
                           </label>
-                          
+
                           {step.type === "normal" && (
-                            <>
+                            <div className="flex gap-2 items-end">
                               <label className="w-24">
-                                <span className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">Day +</span>
+                                <span className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">Delay</span>
                                 <input
                                   type="number"
-                                  min={1}
-                                  value={step.daySequence || 1}
-                                  onChange={e => setStepsLocal(prev => prev.map((s, idx) => idx === i ? { ...s, daySequence: Number(e.target.value) } : s))}
+                                  min={0}
+                                  value={step.delayValue || 0}
+                                  onChange={e => setStepsLocal(prev => prev.map((s, idx) => idx === i ? { ...s, delayValue: Number(e.target.value) } : s))}
                                   className="field-input text-sm py-1.5"
+                                  placeholder="0"
                                 />
                               </label>
                               <label className="w-32">
-                                <span className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">Time</span>
-                                <div className="relative">
-                                  <Clock size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
-                                  <input
-                                    type="time"
-                                    value={step.timeOfDay || "09:00"}
-                                    onChange={e => setStepsLocal(prev => prev.map((s, idx) => idx === i ? { ...s, timeOfDay: e.target.value } : s))}
-                                    className="field-input text-sm py-1.5 pl-8"
-                                  />
-                                </div>
+                                <span className="block text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wider">Unit</span>
+                                <select
+                                  value={step.delayUnit || "days"}
+                                  onChange={e => setStepsLocal(prev => prev.map((s, idx) => idx === i ? { ...s, delayUnit: e.target.value } : s))}
+                                  className="field-input text-sm py-1.5"
+                                >
+                                  <option value="minutes">Minutes</option>
+                                  <option value="hours">Hours</option>
+                                  <option value="days">Days</option>
+                                </select>
                               </label>
-                            </>
+                            </div>
                           )}
-                        </div>
 
-                        <div>
-                          <span className="block text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">AI Instruction</span>
-                          <textarea
-                            value={step.aiInstruction || (typeof step === "string" ? step : "")}
-                            onChange={e => setStepsLocal(prev => prev.map((s, idx) => idx === i ? { ...s, aiInstruction: e.target.value } : s))}
-                            rows={4}
-                            className="field-input field-textarea text-sm w-full"
-                            placeholder="What should the AI do in this step?"
-                          />
-                        </div>
+                          <div>
+                            <span className="block text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wider">AI Instruction</span>
+                            <textarea
+                              value={step.aiInstruction || (typeof step === "string" ? step : "")}
+                              onChange={e => setStepsLocal(prev => prev.map((s, idx) => idx === i ? { ...s, aiInstruction: e.target.value } : s))}
+                              rows={4}
+                              className="field-input field-textarea text-sm w-full"
+                              placeholder="What should the AI do in this step?"
+                            />
+                          </div>
 
-                        <div className="flex items-center justify-between pt-2 border-t border-gray-100">
-                          <button
-                            type="button"
-                            onClick={() => setStepsLocal(prev => prev.map((s, idx) => idx === i ? { ...s, enabled: s.enabled === false ? true : false } : s))}
-                            className={`text-xs font-medium px-3 py-1.5 rounded-md transition-colors ${step.enabled !== false ? "bg-green-100 text-green-700 hover:bg-green-200" : "bg-gray-200 text-gray-600 hover:bg-gray-300"}`}
-                          >
-                            {step.enabled !== false ? "Enabled" : "Disabled"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => { setStepsLocal(prev => prev.filter((_, idx) => idx !== i)); setExpandedStepIndex(null); }}
-                            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
-                          >
-                            <Trash2 size={14} /> Remove Step
-                          </button>
-                        </div>
+                          <div className="flex items-center gap-3 pt-2 border-t border-gray-100">
+                            <span className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Status:</span>
+                            <button
+                              type="button"
+                              onClick={() => setStepsLocal(prev => prev.map((s, idx) => idx === i ? { ...s, enabled: s.enabled === false ? true : false } : s))}
+                              className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${step.enabled !== false ? 'bg-blue-600' : 'bg-gray-200'}`}
+                            >
+                              <span
+                                className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${step.enabled !== false ? 'translate-x-6' : 'translate-x-1'}`}
+                              />
+                            </button>
+                            <span className={`text-xs font-bold ${step.enabled !== false ? "text-blue-600" : "text-gray-400"}`}>
+                              {step.enabled !== false ? "ON" : "OFF"}
+                            </span>
+                          </div>
+                          
+                          <div className="pt-2 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => { setStepsLocal(prev => prev.filter((_, idx) => idx !== i)); setExpandedStepIndex(null); }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-red-500 hover:text-red-700 hover:bg-red-50 rounded-md transition-colors"
+                            >
+                              <Trash2 size={14} /> Remove Step
+                            </button>
+                          </div>
+
                       </div>
                     )}
                   </div>
                 );
               })
             )}
-            
+
             <div className="pt-4 border-t border-gray-100 flex justify-end">
               <button
                 type="button"

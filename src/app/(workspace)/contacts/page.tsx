@@ -82,11 +82,16 @@ export default function ContactsPage() {
   /* Create new list */
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newListName, setNewListName] = useState("");
-  const [createStep, setCreateStep] = useState<1 | 2 | 3>(1);
+  const [createStep, setCreateStep] = useState<1 | 2 | 2.5 | 3>(1);
   const [parsedLeads, setParsedLeads] = useState<ListContact[]>([]);
   const [fileName, setFileName] = useState("");
   const [createError, setCreateError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [csvHeadersCreate, setCsvHeadersCreate] = useState<string[]>([]);
+  const [csvRawDataCreate, setCsvRawDataCreate] = useState<Record<string, string>[]>([]);
+  const [mappedNameColCreate, setMappedNameColCreate] = useState("");
+  const [mappedUrlColCreate, setMappedUrlColCreate] = useState("");
 
   /* Send to campaign */
   const [showSendModal, setShowSendModal] = useState(false);
@@ -174,13 +179,18 @@ export default function ContactsPage() {
   const clearSearch = useCallback(() => { setSearchInput(""); setSearchQuery(""); setPage(1); }, []);
 
   const deleteContactGlobal = async (contactId: string) => {
-    if (!globalThis.confirm("Are you sure you want to permanently delete this contact?")) return;
+    if (!globalThis.confirm("Are you sure you want to permanently delete this contact? This will remove them from all contact lists and campaigns as well.")) return;
     try {
-      const res = await fetch(`/api/contacts/${contactId}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete contact");
+      const res = await fetch(`/api/contacts/${encodeURIComponent(contactId)}`, { method: "DELETE" });
+      if (!res.ok) {
+        const payload = await res.json().catch(() => null);
+        const message = payload && typeof payload === "object" && "error" in payload ? (payload as any).error : "Failed to delete contact";
+        throw new Error(message);
+      }
       void loadContacts();
-    } catch {
-      globalThis.alert("Failed to delete contact.");
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to delete contact.";
+      globalThis.alert(message);
     }
   };
 
@@ -302,6 +312,8 @@ export default function ContactsPage() {
   const resetCreateFlow = useCallback(() => {
     setNewListName(""); setCreateStep(1); setParsedLeads([]);
     setFileName(""); setCreateError(""); setShowCreateModal(false);
+    setCsvHeadersCreate([]); setCsvRawDataCreate([]);
+    setMappedNameColCreate(""); setMappedUrlColCreate("");
   }, []);
 
   const handleNextName = () => {
@@ -336,14 +348,23 @@ export default function ContactsPage() {
           if (l.includes("company") || l.includes("name") || l.includes("business")) { nameCol = h; break; }
         }
         if (!nameCol) { for (const key of headers) { if (key !== urlCol) { nameCol = key; break; } } }
-        if (!urlCol) { setCreateError("Could not detect a Website/URL column."); return; }
-        const valid = data.filter(r => r[urlCol]);
-        if (!valid.length) { setCreateError("No valid URLs found."); return; }
-        setParsedLeads(valid.map(r => ({ companyName: nameCol ? r[nameCol] || "Unknown" : "Unknown", contactUrl: r[urlCol] })));
-        setCreateStep(3);
+        setCsvHeadersCreate(headers);
+        setCsvRawDataCreate(data);
+        setMappedNameColCreate(nameCol);
+        setMappedUrlColCreate(urlCol);
+        setCreateStep(2.5);
       },
       error: (err) => setCreateError(`Parse error: ${err.message}`),
     });
+  };
+
+  const applyMappingCreate = () => {
+    if (!mappedUrlColCreate) { setCreateError("Please select the Website/URL column."); return; }
+    setCreateError("");
+    const valid = csvRawDataCreate.filter(r => r[mappedUrlColCreate]);
+    if (!valid.length) { setCreateError("No valid URLs found."); return; }
+    setParsedLeads(valid.map(r => ({ companyName: mappedNameColCreate ? r[mappedNameColCreate] || "Unknown" : "Unknown", websiteUrl: r[mappedUrlColCreate], contactUrl: "" })));
+    setCreateStep(3);
   };
 
   const saveNewList = async () => {
@@ -377,7 +398,7 @@ export default function ContactsPage() {
 
   const downloadListCsv = (list: ContactList) => {
     const rows = list.contacts.map(c => [`"${c.companyName.replace(/"/g, '""')}"`, `"${c.contactUrl.replace(/"/g, '""')}"`]);
-    const csv = "data:text/csv;charset=utf-8," + ["Company Name,Contact URL", ...rows.map(r => r.join(","))].join("\n");
+    const csv = "data:text/csv;charset=utf-8," + ["Company Name,Website URL", ...rows.map(r => r.join(","))].join("\n");
     const link = document.createElement("a");
     link.href = encodeURI(csv);
     link.download = `${list.name.replace(/[^a-z0-9]/gi, "_")}.csv`;
@@ -634,6 +655,47 @@ export default function ContactsPage() {
               </div>
             )}
 
+            {createStep === 2.5 && (
+              <div className="modal-body">
+                <h3 style={{ margin: "0 0 8px", fontSize: "16px" }}>Map Columns</h3>
+                <p style={{ fontSize: "13px", color: "#6b7280", marginBottom: "16px" }}>
+                  Please confirm or select the correct match for your data from <strong>{fileName}</strong>.
+                </p>
+
+                <div style={{ background: "#f9fafb", borderRadius: "8px", padding: "16px", border: "1px solid #e5e7eb", display: "flex", flexDirection: "column", gap: "12px" }}>
+                  <label className="field-block" style={{ margin: 0 }}>
+                    <span style={{ fontSize: "13px", fontWeight: 500 }}>Company Name</span>
+                    <select
+                      value={mappedNameColCreate}
+                      onChange={(e) => setMappedNameColCreate(e.target.value)}
+                      className="field-input"
+                      style={{ marginTop: "4px" }}
+                    >
+                      <option value="">-- Ignore (use &quot;Unknown&quot;) --</option>
+                      {csvHeadersCreate.map((h, i) => <option key={i} value={h}>{h}</option>)}
+                    </select>
+                  </label>
+                  <label className="field-block" style={{ margin: 0 }}>
+                    <span style={{ fontSize: "13px", fontWeight: 500 }}>Website URL <span style={{ color: "#ef4444" }}>*</span></span>
+                    <select
+                      value={mappedUrlColCreate}
+                      onChange={(e) => setMappedUrlColCreate(e.target.value)}
+                      className="field-input"
+                      style={{ marginTop: "4px" }}
+                    >
+                      <option value="">-- Select URL Column --</option>
+                      {csvHeadersCreate.map((h, i) => <option key={i} value={h}>{h}</option>)}
+                    </select>
+                  </label>
+                </div>
+
+                <div style={{ display: "flex", gap: "12px", marginTop: "16px" }}>
+                  <button type="button" className="button-secondary" onClick={() => setCreateStep(2)}>Back</button>
+                  <button type="button" className="button-primary" onClick={applyMappingCreate} style={{ flex: 1 }} disabled={!mappedUrlColCreate}>Apply & Continue</button>
+                </div>
+              </div>
+            )}
+
             {createStep === 3 && (
               <div className="modal-body">
                 <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "16px" }}>
@@ -736,7 +798,7 @@ export default function ContactsPage() {
                   <th>Company</th>
                   <th>Domain</th>
                   <th>Campaign</th>
-                  <th>Contact URL</th>
+                  <th>Website URL</th>
                   <th>Updated</th>
                   <th>Actions</th>
                 </tr>
@@ -755,7 +817,7 @@ export default function ContactsPage() {
                         ) : "—"}
                       </td>
                       <td>
-                        <a href={contact.contactUrl} target="_blank" rel="noreferrer" className="table-link block truncate max-w-[200px]">{contact.contactUrl}</a>
+                        <a href={contact.websiteUrl || contact.contactUrl} target="_blank" rel="noreferrer" className="table-link block truncate max-w-[200px]">{contact.websiteUrl || contact.contactUrl}</a>
                       </td>
                       <td className="text-gray-400 text-xs">{formatDateTime(contact.updatedAt)}</td>
                       <td>
@@ -874,7 +936,7 @@ export default function ContactsPage() {
                       <div className="table-wrap">
                         <table className="clean-table">
                           <thead>
-                            <tr><th>#</th><th>Company Name</th><th>Contact URL</th></tr>
+                            <tr><th>#</th><th>Company Name</th><th>Website URL</th></tr>
                           </thead>
                           <tbody>
                             {list.contacts.map((contact, i) => (
@@ -882,8 +944,8 @@ export default function ContactsPage() {
                                 <td style={{ color: "#9ca3af", width: "40px" }}>{i + 1}</td>
                                 <td style={{ fontWeight: 500 }}>{contact.companyName}</td>
                                 <td>
-                                  <a href={contact.contactUrl} target="_blank" rel="noreferrer" className="table-link">
-                                    {contact.contactUrl.length > 50 ? `${contact.contactUrl.slice(0, 50)}…` : contact.contactUrl}
+                                  <a href={contact.websiteUrl || contact.contactUrl} target="_blank" rel="noreferrer" className="table-link">
+                                    {(contact.websiteUrl || contact.contactUrl).length > 50 ? `${(contact.websiteUrl || contact.contactUrl).slice(0, 50)}…` : (contact.websiteUrl || contact.contactUrl)}
                                   </a>
                                 </td>
                               </tr>

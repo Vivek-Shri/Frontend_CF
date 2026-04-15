@@ -22,6 +22,7 @@ import {
 
 interface ListContact {
   companyName: string;
+  websiteUrl: string;
   contactUrl: string;
 }
 
@@ -118,9 +119,9 @@ export default function ListsPage() {
     const headers = ["Company Name", "Contact URL"];
     const rows = list.contacts.map(c => [
       `"${(c.companyName || "").replace(/"/g, '""')}"`,
-      `"${(c.contactUrl || "").replace(/"/g, '""')}"`,
+      `"${(c.websiteUrl || "").replace(/"/g, '""')}"`,
     ]);
-    const csv = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map(r => r.join(","))].join("\n");
+    const csv = "data:text/csv;charset=utf-8," + [["Company Name", "Website URL"].join(","), ...rows.map(r => r.join(","))].join("\n");
     const link = document.createElement("a");
     link.href = encodeURI(csv);
     link.download = `${list.name.replace(/[^a-z0-9]/gi, "_")}.csv`;
@@ -298,7 +299,8 @@ export default function ListsPage() {
 
         const normalized = validRows.map((r) => ({
           companyName: nameCol ? r[nameCol] || "Unknown" : "Unknown",
-          contactUrl: r[urlCol],
+          websiteUrl: r[urlCol],
+          contactUrl: "",
         }));
 
         setParsedLeads(normalized);
@@ -415,13 +417,13 @@ export default function ListsPage() {
           if (res.ok) {
             const data = await res.json();
             setLists(prev => prev.map(l => l.id === listId ? { ...l, contacts: data.contacts || [] } : l));
-            checkUrls(data.contacts?.map((c: any) => c.contactUrl) || []);
+            checkUrls(data.contacts?.map((c: any) => c.websiteUrl || c.contactUrl) || []);
           }
         } catch (err) {
           console.error("Failed to load list details:", err);
         }
       } else if (list) {
-        checkUrls(list.contacts.map(c => c.contactUrl));
+        checkUrls(list.contacts.map(c => c.websiteUrl || c.contactUrl));
       }
     }
     setExpandedListId((prev) => (prev === listId ? null : listId));
@@ -662,7 +664,7 @@ export default function ListsPage() {
                           <tr>
                             <th>#</th>
                             <th>Company Name</th>
-                            <th>Contact URL</th>
+                            <th>Website URL</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -679,14 +681,14 @@ export default function ListsPage() {
                                 <td>
                                   <div className="flex items-center gap-2">
                                     <a
-                                      href={contact.contactUrl}
+                                      href={contact.websiteUrl || contact.contactUrl}
                                       target="_blank"
                                       rel="noreferrer"
                                       className="table-link"
                                     >
-                                      {contact.contactUrl.length > 50
-                                        ? `${contact.contactUrl.slice(0, 50)}…`
-                                        : contact.contactUrl}
+                                      {(contact.websiteUrl || contact.contactUrl).length > 50
+                                        ? `${(contact.websiteUrl || contact.contactUrl).slice(0, 50)}…`
+                                        : (contact.websiteUrl || contact.contactUrl)}
                                     </a>
                                     {exists && (
                                       <span
@@ -898,7 +900,7 @@ export default function ListsPage() {
                           textOverflow: "ellipsis",
                         }}
                       >
-                        {l.contactUrl}
+                        {l.websiteUrl || l.contactUrl}
                       </span>
                     </div>
                   ))}

@@ -1,7 +1,7 @@
 import pool from './db';
 
 export interface ContactListItem {
-    item_id: string;
+    id: string;
     list_id: string;
     company_name: string;
     contact_url: string;
@@ -59,14 +59,14 @@ export async function addItemsToList(
     items: { company_name: string; contact_url: string }[]
 ): Promise<void> {
     for (const item of items) {
-        const item_id = crypto.randomUUID();
+        const id = crypto.randomUUID();
         const now = new Date().toISOString();
 
         await pool.query(
-            `INSERT INTO contact_list_items (item_id, list_id, company_name, contact_url, created_at)
+            `INSERT INTO contact_list_items (id, list_id, company_name, contact_url, created_at)
        VALUES ($1, $2, $3, $4, $5)
        ON CONFLICT (list_id, contact_url) DO NOTHING`,
-            [item_id, list_id, item.company_name || '', item.contact_url || '', now]
+            [id, list_id, item.company_name || '', item.contact_url || '', now]
         );
     }
 }

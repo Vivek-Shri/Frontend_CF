@@ -37,7 +37,7 @@ export async function GET(request: Request, { params }: { params: Promise<Params
       }
 
       const { rows: items } = await client.query(
-        `SELECT company_name as "companyName", contact_url as "contactUrl"
+        `SELECT company_name as "companyName", website_url as "websiteUrl", contact_url as "contactUrl"
          FROM contact_list_items WHERE list_id = $1`,
         [listId]
       );
@@ -94,13 +94,23 @@ export async function PATCH(request: Request, { params }: { params: Promise<Para
       await client.query("BEGIN");
       let idx = 0;
       for (const c of contacts) {
-        const url = (c.contactUrl || "").trim();
-        if (url) {
+        const websiteUrl = (c.websiteUrl || "").trim();
+        const contactUrl = (c.contactUrl || websiteUrl).trim();
+        if (websiteUrl || contactUrl) {
           const itemId = `${listId}-item-${Date.now()}-${idx++}-${Math.random().toString(36).substring(2, 8)}`;
+          
+          let urlKey = contactUrl || websiteUrl;
+          try {
+            const u = new URL(urlKey.startsWith("http") ? urlKey : "https://" + urlKey);
+            urlKey = u.hostname.replace("www.", "") + u.pathname + u.search;
+          } catch {
+            // fallback
+          }
+
           await client.query(
-            `INSERT INTO contact_list_items (item_id, list_id, company_name, contact_url, created_at)
-             VALUES ($1, $2, $3, $4, $5)`,
-            [itemId, listId, c.companyName || "Unknown", url, now]
+            `INSERT INTO contact_list_items (id, list_id, company_name, website_url, contact_url, url_key, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+            [itemId, listId, c.companyName || "Unknown", websiteUrl, contactUrl, urlKey, now]
           );
         }
       }

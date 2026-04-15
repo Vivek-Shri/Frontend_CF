@@ -51,6 +51,7 @@ export interface ContactRecord {
   campaignId: string;
   campaignName?: string;
   companyName: string;
+  websiteUrl?: string;
   contactUrl: string;
   domain: string;
   location?: string;
@@ -60,6 +61,13 @@ export interface ContactRecord {
   replyStatus?: string;
   createdAt: string;
   updatedAt: string;
+  /** "pending" | "submitted" | "failed" | "skipped" — set by the outreach run */
+  attemptStatus?: "pending" | "submitted" | "failed" | "skipped";
+  /** Detailed failure/success reason from the outreach engine */
+  attemptDetailStatus?: string;
+  captchaPresent?: boolean;
+  formPresent?: boolean;
+  submittedAt?: string;
 }
 
 export interface OutreachRunSnapshot {
@@ -74,15 +82,25 @@ export interface OutreachRunSnapshot {
     campaignId?: string;
     campaignTitle?: string;
     companyName: string;
+    websiteUrl?: string;
     contactUrl: string;
     submitted: "Yes" | "No";
     status: "success" | "warning" | "fail";
     captchaStatus: string;
     confirmationMsg: string;
     fieldsFilled?: string;
+    fieldsFilledData?: Record<string, string>;
+    detectedFormUrl?: string;
     estCostUsd: number;
+    strategy?: string;
+    discoverMethod?: string;
+    inputTokens?: number;
+    outputTokens?: number;
+    bandwidthKb?: number;
+    step_index?: number;
   }>;
   duplicatesSkipped: number;
+  activeLeads?: Record<string, string>;
   resumeSkippedLeads?: number;
   socialSkippedLeads?: number;
   resumedFromRunId?: string;

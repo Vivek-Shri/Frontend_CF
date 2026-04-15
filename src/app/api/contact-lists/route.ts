@@ -20,7 +20,7 @@ export async function GET() {
     try {
       let query = `
         SELECT l.list_id as id, l.name, l.created_at as "createdAt",
-               COUNT(i.item_id) as "contactCount"
+               COUNT(i.id) as "contactCount"
         FROM contact_lists l
         LEFT JOIN contact_list_items i ON l.list_id = i.list_id
       `;
@@ -88,7 +88,7 @@ export async function POST(request: Request) {
 
       if (Array.isArray(contacts) && contacts.length > 0) {
         // Filter out empty URLs and build values for batch insert
-        const validContacts = contacts.filter(c => (c.contactUrl || "").trim() !== "");
+        const validContacts = contacts.filter(c => ((c.websiteUrl || "") + (c.contactUrl || "")).trim() !== "");
         if (validContacts.length > 0) {
           const values: any[] = [];
           const placeholders: string[] = [];
@@ -96,16 +96,24 @@ export async function POST(request: Request) {
 
           for (let i = 0; i < validContacts.length; i++) {
             const c = validContacts[i];
-            const url = c.contactUrl.trim();
+            const websiteUrl = (c.websiteUrl || "").trim();
+            const contactUrl = (c.contactUrl || websiteUrl).trim();
             const itemId = `${listId}-item-${i}-${Math.random().toString(36).substring(2, 8)}`;
             
-            placeholders.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++})`);
-            values.push(itemId, listId, c.companyName || "Unknown", url, now);
+            let urlKey = contactUrl || websiteUrl;
+            try {
+              const u = new URL(urlKey.startsWith("http") ? urlKey : "https://" + urlKey);
+              urlKey = u.hostname.replace("www.", "") + u.pathname + u.search;
+            } catch {
+              // fallback
+            }
+
+            placeholders.push(`($${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++}, $${paramIdx++})`);
+            values.push(itemId, listId, c.companyName || "Unknown", websiteUrl, contactUrl, urlKey, now);
           }
 
-          // PostgreSQL supports max 65535 generic parameters, which allows up to ~13,100 rows per batch. We are safe with ~5000 contacts.
           const insertQuery = `
-            INSERT INTO contact_list_items (item_id, list_id, company_name, contact_url, created_at)
+            INSERT INTO contact_list_items (id, list_id, company_name, website_url, contact_url, url_key, created_at)
             VALUES ${placeholders.join(", ")}
           `;
           

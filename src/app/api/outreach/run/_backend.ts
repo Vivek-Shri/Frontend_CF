@@ -362,6 +362,9 @@ export async function fetchBackendSnapshot(
         return null; // Not active
       }
     } else if (backendRunId !== requestedRunId) {
+      // The backend's active run is a different one.
+      // The requested run may be a completed run persisted in the backend DB.
+      // Fall back to the results endpoint rather than returning null immediately.
       return null;
     }
 
@@ -387,4 +390,81 @@ export async function fetchBackendSnapshot(
   }
 
   return toDashboardSnapshot(statusPayload, logs);
+}
+
+/**
+ * Attempts to fetch persisted results for a completed run from the backend.
+ * The backend may expose a /outreach/results?run_id=X endpoint that serves
+ * results even after the run is no longer in active memory.
+ * Returns null if the endpoint is unavailable or returns no data.
+ */
+export async function fetchBackendRunResults(
+  runId: string,
+  options?: { userId?: string; isAdmin?: boolean }
+): Promise<OutreachRunSnapshot | null> {
+  const backendBaseUrl = resolveBackendBaseUrl();
+  const headers = {} as Record<string, string>;
+  if (options?.userId) headers["X-User-Id"] = options.userId;
+  if (options?.isAdmin) headers["X-Is-Admin"] = "true";
+
+  // Try the dedicated results endpoint first
+  const resultsUrl = new URL(`${backendBaseUrl}/outreach/results`);
+  resultsUrl.searchParams.set("run_id", runId);
+
+  try {
+    const resultsResponse = await fetch(resultsUrl.toString(), {
+      method: "GET",
+      cache: "no-store",
+      headers,
+    });
+
+    if (resultsResponse.ok) {
+      const payload = await parseJsonObject(resultsResponse);
+      if (payload && (payloadRunId(payload) === runId || Array.isArray(payload.results))) {
+        return toDashboardSnapshot(
+          {
+            ...payload,
+            run_id: runId,
+            // If the backend only returns results without status info, assume completed
+            status: payload.status ?? "completed",
+            running: false,
+          },
+          []
+        );
+      }
+    }
+  } catch {
+    // endpoint doesn't exist on this backend — that's expected
+  }
+
+  // Fallback: try the history/archive endpoint some backends expose
+  const historyUrl = new URL(`${backendBaseUrl}/outreach/history`);
+  historyUrl.searchParams.set("run_id", runId);
+
+  try {
+    const historyResponse = await fetch(historyUrl.toString(), {
+      method: "GET",
+      cache: "no-store",
+      headers,
+    });
+
+    if (historyResponse.ok) {
+      const payload = await parseJsonObject(historyResponse);
+      if (payload && Array.isArray(payload.results) && payload.results.length > 0) {
+        return toDashboardSnapshot(
+          {
+            ...payload,
+            run_id: runId,
+            status: payload.status ?? "completed",
+            running: false,
+          },
+          []
+        );
+      }
+    }
+  } catch {
+    // endpoint doesn't exist either
+  }
+
+  return null;
 }

@@ -90,11 +90,17 @@ export function AddContactsModal({
   const { data: session } = useSession();
   const userId = (session?.user as any)?.id || "";
 
-  // Steps: 1 = upload CSV, 2 = review filtered + multi-select, 3 = save options, 4 = done
+  // Steps: 1 = upload CSV, 1.5 = map columns, 2 = review filtered + multi-select, 3 = save options, 4 = done
   const [step, setStep] = useState<number>(1);
   const [error, setError] = useState("");
   const [fileName, setFileName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // CSV parsing state
+  const [csvHeaders, setCsvHeaders] = useState<string[]>([]);
+  const [csvRawData, setCsvRawData] = useState<Record<string, string>[]>([]);
+  const [mappedNameCol, setMappedNameCol] = useState("");
+  const [mappedUrlCol, setMappedUrlCol] = useState("");
 
   // Parsed & filtered data
   const [filteredRows, setFilteredRows] = useState<ParsedRow[]>([]);
@@ -104,7 +110,7 @@ export function AddContactsModal({
   const [totalRawRows, setTotalRawRows] = useState(0);
   
   // Existing contacts checking
-  const [existingUrls, setExistingUrls] = useState<Set<string>>(new Set());
+  const [existingDomains, setExistingDomains] = useState<Set<string>>(new Set());
   const [isChecking, setIsChecking] = useState(false);
 
   // Lists state
@@ -142,13 +148,17 @@ export function AddContactsModal({
       setStep(1);
       setError("");
       setFileName("");
+      setCsvHeaders([]);
+      setCsvRawData([]);
+      setMappedNameCol("");
+      setMappedUrlCol("");
       setFilteredRows([]);
       setSelectedIds(new Set());
       setDuplicatesRemoved(0);
       setNoDomainRemoved(0);
       setTotalRawRows(0);
       setSavedCount(0);
-      setExistingUrls(new Set());
+      setExistingDomains(new Set());
       setIsChecking(false);
       setSaveMode("new");
       setNewListName("");
@@ -177,25 +187,38 @@ export function AddContactsModal({
   const checkExistingContacts = async (rows: ParsedRow[]) => {
     setIsChecking(true);
     try {
-      const urls = rows.map((r) => r.contactUrl);
-      const chunkSize = 2000;
+      const domains = Array.from(new Set(rows.map((r) => r.domain).filter(Boolean)));
+      if (domains.length === 0) return;
+
+      const chunkSize = 500;
       const allExisting = new Set<string>();
 
-      for (let i = 0; i < urls.length; i += chunkSize) {
-        const chunk = urls.slice(i, i + chunkSize);
+      for (let i = 0; i < domains.length; i += chunkSize) {
+        const chunk = domains.slice(i, i + chunkSize);
         const res = await fetch("/api/contacts/check-exists", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ urls: chunk }),
+          body: JSON.stringify({ domains: chunk }),
         });
         if (res.ok) {
           const data = await res.json();
-          (data.existing_urls || []).forEach((u: string) => allExisting.add(u));
+          (data.existing_domains || []).forEach((d: string) => allExisting.add(d.toLowerCase()));
         }
       }
-      setExistingUrls(allExisting);
-    } catch {
-      // Ignored
+      setExistingDomains(allExisting);
+      
+      // Auto-deselect existing domains
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        rows.forEach((row, idx) => {
+          if (row.domain && allExisting.has(row.domain.toLowerCase())) {
+            next.delete(idx);
+          }
+        });
+        return next;
+      });
+    } catch (e) {
+      console.error("Failed to check existing domains", e);
     } finally {
       setIsChecking(false);
     }
@@ -267,44 +290,51 @@ export function AddContactsModal({
           }
         }
 
-        if (!urlCol) {
-          setError("Could not detect a Website/URL column in the CSV.");
-          return;
-        }
-
-        // Build parsed rows with domains
-        const rawRows: ParsedRow[] = data
-          .filter((row) => row[urlCol]?.trim())
-          .map((row) => {
-            const contactUrl = row[urlCol].trim();
-            return {
-              companyName: nameCol ? row[nameCol]?.trim() || "Unknown" : "Unknown",
-              contactUrl,
-              domain: extractDomain(contactUrl),
-            };
-          });
-
-        setTotalRawRows(rawRows.length);
-
-        // Apply domain dedup + no-domain filter
-        const { kept, duplicatesRemoved: dupes, noDomainRemoved: noDomain } =
-          dedupeByDomain(rawRows);
-
-        setFilteredRows(kept);
-        setDuplicatesRemoved(dupes);
-        setNoDomainRemoved(noDomain);
-
-        // Select all by default
-        setSelectedIds(new Set(kept.map((_, i) => i)));
-        setStep(2);
-        
-        // Also fire off api to check if existing
-        void checkExistingContacts(kept);
+        setCsvHeaders(headers);
+        setCsvRawData(data);
+        setMappedUrlCol(urlCol);
+        setMappedNameCol(nameCol);
+        setStep(1.5);
       },
       error: (err) => {
         setError(`Failed to parse CSV: ${err.message}`);
       },
     });
+  };
+
+  /* ─ Column Mapping ─ */
+
+  const applyMapping = () => {
+    if (!mappedUrlCol) {
+      setError("Please select the Website/URL column.");
+      return;
+    }
+    setError("");
+
+    const rawRows: ParsedRow[] = csvRawData
+      .filter((row) => row[mappedUrlCol]?.trim())
+      .map((row) => {
+        const websiteUrl = row[mappedUrlCol].trim();
+        return {
+          companyName: mappedNameCol ? row[mappedNameCol]?.trim() || "Unknown" : "Unknown",
+          websiteUrl, // Store inside websiteUrl
+          contactUrl: "", // Automation scrapes this later
+          domain: extractDomain(websiteUrl),
+        };
+      });
+
+    setTotalRawRows(rawRows.length);
+
+    const { kept, duplicatesRemoved: dupes, noDomainRemoved: noDomain } = dedupeByDomain(rawRows);
+
+    setFilteredRows(kept);
+    setDuplicatesRemoved(dupes);
+    setNoDomainRemoved(noDomain);
+
+    setSelectedIds(new Set(kept.map((_, i) => i)));
+    setStep(2);
+    
+    void checkExistingContacts(kept);
   };
 
   /* ─ Selection ─ */
@@ -346,7 +376,7 @@ export function AddContactsModal({
     setError("");
     setIsSavingToDb(true);
     const selected = filteredRows.filter((_, i) => selectedIds.has(i));
-    const items = selected.map(r => ({ companyName: r.companyName, contactUrl: r.contactUrl }));
+    const items = selected.map(r => ({ companyName: r.companyName, websiteUrl: r.websiteUrl, contactUrl: r.contactUrl || "" }));
 
     // Save to backend database as well with campaign_id
     try {
@@ -462,6 +492,65 @@ export function AddContactsModal({
             </div>
           )}
 
+          {/* ─── Step 1.5: Map Columns ─── */}
+          {step === 1.5 && (
+            <div className="space-y-6">
+              <div className="text-center">
+                <div className="w-12 h-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-3">
+                  <ListIcon size={24} />
+                </div>
+                <h4 className="text-lg font-medium text-gray-900">Map Columns</h4>
+                <p className="text-sm text-gray-500 mt-1">
+                  We detected these columns from <strong>{fileName}</strong>.<br />
+                  Please confirm or select the correct match for your data.
+                </p>
+              </div>
+
+              <div className="bg-gray-50 rounded-xl p-5 border border-gray-200 flex flex-col gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Company Name</label>
+                  <select
+                    value={mappedNameCol}
+                    onChange={(e) => setMappedNameCol(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                  >
+                    <option value="">-- Ignore (use &quot;Unknown&quot;) --</option>
+                    {csvHeaders.map((h, i) => <option key={i} value={h}>{h}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Website / Contact URL <span className="text-red-500">*</span></label>
+                  <select
+                    value={mappedUrlCol}
+                    onChange={(e) => setMappedUrlCol(e.target.value)}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white"
+                  >
+                    <option value="">-- Select URL Column --</option>
+                    {csvHeaders.map((h, i) => <option key={i} value={h}>{h}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setStep(1)}
+                  className="px-5 py-2.5 border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={applyMapping}
+                  className="flex-1 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white text-sm font-medium rounded-lg transition-colors"
+                  disabled={!mappedUrlCol}
+                >
+                  Apply & Continue
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* ─── Step 2: Filtered results + Multi-select ─── */}
           {step === 2 && (
             <div className="space-y-4">
@@ -481,7 +570,12 @@ export function AddContactsModal({
                     )}
                     {duplicatesRemoved > 0 && (
                       <li>
-                        {duplicatesRemoved} removed (duplicate domain)
+                        {duplicatesRemoved} removed (duplicate in CSV)
+                      </li>
+                    )}
+                    {existingDomains.size > 0 && (
+                      <li className="font-semibold text-amber-600">
+                        {existingDomains.size} companies already exist in system and were deselected
                       </li>
                     )}
                   </ul>
@@ -535,7 +629,7 @@ export function AddContactsModal({
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {filteredRows.map((row, i) => {
-                      const exists = existingUrls.has(row.contactUrl);
+                      const exists = row.domain && existingDomains.has(row.domain.toLowerCase());
                       return (
                         <tr
                           key={i}
@@ -560,13 +654,13 @@ export function AddContactsModal({
                           </td>
                           <td className="px-3 py-2 text-gray-500">
                             <div className="flex items-center gap-2">
-                              <span className="truncate max-w-[180px]">{row.contactUrl}</span>
+                              <span className="truncate max-w-[180px]">{row.websiteUrl || row.contactUrl}</span>
                               {exists && (
                                 <span
                                   className="inline-flex items-center text-xs font-medium text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded gap-1 whitespace-nowrap"
-                                  title="This company is already visited by our automation."
+                                  title="This company already exists in your database."
                                 >
-                                  <AlertCircle size={12} /> Already companies exists
+                                  <AlertCircle size={12} /> System Duplicate
                                 </span>
                               )}
                             </div>
